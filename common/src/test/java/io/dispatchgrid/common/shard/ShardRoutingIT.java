@@ -18,7 +18,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
-@SpringBootTest(classes = TestApp.class, properties = "spring.data.redis.host=127.0.0.1")
+@SpringBootTest(
+    classes = TestApp.class,
+    properties =
+        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration")
 class ShardRoutingIT {
 
   @Container static MySQLContainer<?> shard0 = new MySQLContainer<>("mysql:8.0");

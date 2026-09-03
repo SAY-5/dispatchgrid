@@ -9,17 +9,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
 /**
  * Builds one Hikari pool per configured shard, applies Flyway migrations to each, and exposes the
- * router. Spring Boot's single-DataSource and Flyway auto-configuration are excluded because
- * there is intentionally no primary datasource.
+ * router. See {@link SingleDataSourceExclusionFilter} for why no primary datasource exists.
  */
-@AutoConfiguration(before = {DataSourceAutoConfiguration.class, FlywayAutoConfiguration.class})
+@AutoConfiguration
 @EnableConfigurationProperties(ShardProperties.class)
 @ConditionalOnProperty(prefix = "dispatchgrid", name = "shards[0].url")
 public class ShardDataSourcesConfig {
