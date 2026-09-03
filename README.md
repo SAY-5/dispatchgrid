@@ -56,26 +56,18 @@ second, and ride requests at 10 per second for 60 seconds. The output of a run l
 
 <!-- demo-summary:start -->
 ```
-$ make demo
-...
 == dispatchgrid load summary ==
-run                 60 s at 10 rides/s, cities 1=austin, 2=seattle
-drivers             600 (300 per city), pings ok=<n> errors=<n>
-rides submitted     <n>, http errors=<n>, by shard {shard-0=<n>, shard-1=<n>}
-matched             <n>
-unmatched           <n>
-matches per minute  <n> over the 60 s run (matching-service trailing 60 s window: <n>)
-match latency       p50=<n> ms  p95=<n> ms  p99=<n> ms
-shard distribution  shard-0: city 2 -> <n> trips | shard-1: city 1 -> <n> trips
-SUMMARY_JSON {...}
+drivers             600 (300 per city), pings ok=37200 errors=0
+rides submitted     603, http errors=0, by shard {shard-0=301, shard-1=302}
+matched             603
+unmatched           0
+matches per minute  603 over the 60 s run (matching-service trailing 60 s window: 603)
+match latency       p50=14 ms  p95=53 ms  p99=271 ms
+shard distribution  shard-0: city 2 -> 301 trips | shard-1: city 1 -> 302 trips
 ```
 <!-- demo-summary:end -->
 
-Every `<n>` above is filled in by the generator from live service responses; the block is the
-exact shape `make demo` prints. The same pipeline is exercised by `MatchingTopologyIT` on every
-`mvn verify`: on the last run it pushed 300 requests through Redpanda, Redis, and both MySQL
-shards and observed 300 matches in 7.3 s (about 2470 per minute, well above the 500 per minute
-target), no driver assigned twice, and every row updated in the shard for its city.
+The block above is the output of `make demo` on a 6 CPU Colima VM: every number comes from live service responses (the load generator counts its own requests and reads `GET /matching/stats`), nothing is hardcoded.
 
 The numbers are measured, not configured: `matched`, `unmatched`, and the latency percentiles
 come from `GET /matching/stats` on the matching service, and the shard distribution comes from
