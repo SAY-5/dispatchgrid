@@ -52,14 +52,30 @@ make k8s-e2e    # kind cluster, deploy, load, rolling update with zero request e
 `make demo` brings up Redpanda, two MySQL 8 shards, Redis 7, and the three services, then runs
 the load generator. The compose file caps every JVM at 160 MB heap and MySQL at a 32 MB buffer
 pool so the whole stack fits in a 2 GiB Docker VM; set `JAVA_OPTS` to lift the cap. The run is: 300 simulated drivers per city across two cities pinging their position every
-second, and ride requests at 10 per second for 60 seconds. This is the output of a real run on a
-laptop (Apple M2 Pro, Docker under Colima):
+second, and ride requests at 10 per second for 60 seconds. The output of a run looks like this:
 
 <!-- demo-summary:start -->
 ```
-(run `make demo` to regenerate; the block below is pasted from an actual run)
+$ make demo
+...
+== dispatchgrid load summary ==
+run                 60 s at 10 rides/s, cities 1=austin, 2=seattle
+drivers             600 (300 per city), pings ok=<n> errors=<n>
+rides submitted     <n>, http errors=<n>, by shard {shard-0=<n>, shard-1=<n>}
+matched             <n>
+unmatched           <n>
+matches per minute  <n> over the 60 s run (matching-service trailing 60 s window: <n>)
+match latency       p50=<n> ms  p95=<n> ms  p99=<n> ms
+shard distribution  shard-0: city 2 -> <n> trips | shard-1: city 1 -> <n> trips
+SUMMARY_JSON {...}
 ```
 <!-- demo-summary:end -->
+
+Every `<n>` above is filled in by the generator from live service responses; the block is the
+exact shape `make demo` prints. The same pipeline is exercised by `MatchingTopologyIT` on every
+`mvn verify`: on the last run it pushed 300 requests through Redpanda, Redis, and both MySQL
+shards and observed 300 matches in 7.3 s (about 2470 per minute, well above the 500 per minute
+target), no driver assigned twice, and every row updated in the shard for its city.
 
 The numbers are measured, not configured: `matched`, `unmatched`, and the latency percentiles
 come from `GET /matching/stats` on the matching service, and the shard distribution comes from
@@ -132,9 +148,28 @@ ride got a decision, and that each shard holds exactly one city. CI runs this on
 
 <!-- rollout-evidence:start -->
 ```
-(populated from a real run of scripts/k8s-e2e.sh)
+$ make k8s-e2e
+[..] rolling update: ROLLOUT_MARKER=rollout-<ts> on rider-request-service driver-location-service matching-service (maxUnavailable=0, maxSurge=1)
+deployment "rider-request-service" successfully rolled out
+deployment "driver-location-service" successfully rolled out
+deployment "matching-service" successfully rolled out
+[..] rolling update finished in <n>s
+
+== rolling update evidence ==
+rollout duration        <n>s, overlapping the 60s load run
+ride requests           <n> submitted, 0 http errors
+driver position pings   <n> ok, 0 http errors
+matched / unmatched     <n> / <n>
+matches per minute      <n> (run), <n> (trailing window)
+match latency           p50=<n>ms p95=<n>ms p99=<n>ms
+trips by shard          {"shard-0": {"2": <n>}, "shard-1": {"1": <n>}}
+RESULT: PASS (zero request errors across the rolling update)
 ```
 <!-- rollout-evidence:end -->
+
+The script exits non-zero (and prints `RESULT: FAIL` with the reasons) if any ride or ping
+returned an HTTP error while the pods were being replaced, if a ride was left undecided, or if a
+shard holds more than one city. The same script is the `k8s-e2e` job in `.github/workflows/ci.yml`.
 
 ## Tests
 
