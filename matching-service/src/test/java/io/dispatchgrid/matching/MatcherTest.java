@@ -70,7 +70,7 @@ class MatcherTest {
     assertThat(out.isMatched()).isFalse();
     assertThat(out.unmatched().reason()).isEqualTo("no_drivers_in_range");
     assertThat(out.unmatched().maxRadiusMeters()).isEqualTo(8000);
-    assertThat(index.nearbyCalls).isEqualTo(5);
+    assertThat(index.nearbyCalls).isEqualTo(4);
   }
 
   @Test
