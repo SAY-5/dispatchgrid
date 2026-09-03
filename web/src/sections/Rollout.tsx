@@ -100,7 +100,7 @@ export function Rollout() {
         <p className="section-lede">
           <code>maxUnavailable: 0</code>, <code>maxSurge: 1</code>: a surge pod is created, it must pass its readiness
           probe (Kafka, Redis, the shards, and the Streams state all answering) before one old pod is terminated, and the
-          old pod sleeps 5 s in <code>preStop</code> so endpoints drain before <code>SIGTERM</code>. Requests only ever
+          old pod sleeps 10 s in <code>preStop</code> so endpoints drain before <code>SIGTERM</code>. Requests only ever
           route to Ready pods. The real <code>make k8s-e2e</code> run replaced all three services in 23 s with zero
           request errors.
         </p>
