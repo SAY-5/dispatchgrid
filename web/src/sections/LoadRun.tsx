@@ -19,9 +19,9 @@ function Sparkline({ values }: { values: number[] }) {
   const pts = values.map((v, i) => `${(i / (n - 1)) * w},${h - (v / max) * (h - 6) - 2}`);
   const path = pts.length > 1 ? `M ${pts.join(" L ")}` : "";
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="spark" role="img" aria-label="Matches per second over the run">
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="spark" role="img" aria-label="Matches per second over the run">
       <line x1={0} y1={h - (10 / max) * (h - 6) - 2} x2={w} y2={h - (10 / max) * (h - 6) - 2} stroke="rgba(223,241,255,0.18)" strokeDasharray="3 6" />
-      {path && <path d={path} fill="none" stroke="var(--sapphire)" strokeWidth={2} />}
+      {path && <path d={path} fill="none" stroke="var(--sapphire)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
       {path && <path d={`${path} L ${pts[pts.length - 1].split(",")[0]},${h} L 0,${h} Z`} fill="rgba(76,141,255,0.14)" />}
     </svg>
   );
