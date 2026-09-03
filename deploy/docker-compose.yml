@@ -1,6 +1,8 @@
 name: dispatchgrid
 
+# Heap caps keep the whole stack inside a small Docker VM; raise JAVA_OPTS for bigger runs.
 x-service-env: &service-env
+  JAVA_TOOL_OPTIONS: ${JAVA_OPTS:--Xmx160m -XX:+UseSerialGC -XX:TieredStopAtLevel=1}
   KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
   REDIS_HOST: redis
   SHARD0_URL: jdbc:mysql://mysql-shard-0:3306/dispatch
@@ -10,7 +12,7 @@ x-service-env: &service-env
 
 x-mysql: &mysql
   image: mysql:8.0
-  command: ["--performance-schema=OFF", "--innodb-buffer-pool-size=128M", "--max-connections=200"]
+  command: ["--performance-schema=OFF", "--innodb-buffer-pool-size=32M", "--max-connections=200"]
   environment:
     MYSQL_DATABASE: dispatch
     MYSQL_USER: dispatch
@@ -30,7 +32,8 @@ services:
       - start
       - --mode=dev-container
       - --smp=1
-      - --memory=512M
+      - --memory=384M
+      - --reserve-memory=0M
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
     ports:
@@ -129,6 +132,7 @@ services:
       RIDES_PER_SECOND: ${RIDES_PER_SECOND:-10}
       DRIVERS_PER_CITY: ${DRIVERS_PER_CITY:-300}
       SUMMARY_OUT: /tmp/loadgen-summary.json
+      JAVA_TOOL_OPTIONS: -Xmx192m -XX:+UseSerialGC
     depends_on:
       - rider-request-service
       - driver-location-service
