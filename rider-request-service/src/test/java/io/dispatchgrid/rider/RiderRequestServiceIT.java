@@ -35,8 +35,15 @@ import org.testcontainers.redpanda.RedpandaContainer;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class RiderRequestServiceIT {
 
-  @Container static MySQLContainer<?> shard0 = new MySQLContainer<>("mysql:8.0");
-  @Container static MySQLContainer<?> shard1 = new MySQLContainer<>("mysql:8.0");
+  @Container static MySQLContainer<?> shard0 = mysql();
+  @Container static MySQLContainer<?> shard1 = mysql();
+
+  /** Socket timeouts keep a stalled handshake from hanging the container startup wait. */
+  static MySQLContainer<?> mysql() {
+    return new MySQLContainer<>("mysql:8.0")
+        .withUrlParam("connectTimeout", "5000")
+        .withUrlParam("socketTimeout", "30000");
+  }
 
   @Container
   static RedpandaContainer kafka = new RedpandaContainer("redpandadata/redpanda:v24.3.18");

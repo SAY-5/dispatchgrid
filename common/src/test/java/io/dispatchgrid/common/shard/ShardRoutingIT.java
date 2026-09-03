@@ -26,8 +26,15 @@ import org.testcontainers.junit.jupiter.Testcontainers;
             + "org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration")
 class ShardRoutingIT {
 
-  @Container static MySQLContainer<?> shard0 = new MySQLContainer<>("mysql:8.0");
-  @Container static MySQLContainer<?> shard1 = new MySQLContainer<>("mysql:8.0");
+  @Container static MySQLContainer<?> shard0 = mysql();
+  @Container static MySQLContainer<?> shard1 = mysql();
+
+  /** Socket timeouts keep a stalled handshake from hanging the container startup wait. */
+  static MySQLContainer<?> mysql() {
+    return new MySQLContainer<>("mysql:8.0")
+        .withUrlParam("connectTimeout", "5000")
+        .withUrlParam("socketTimeout", "30000");
+  }
 
   @DynamicPropertySource
   static void shards(DynamicPropertyRegistry r) {
