@@ -11,10 +11,10 @@ const SIZE = 720;
 const HALF_M = 7200;
 const PX_PER_M = SIZE / 2 / HALF_M;
 const CONTENTION = [
-  { label: "none", n: 0, hint: "the nearest driver wins" },
-  { label: "3 rides", n: 3, hint: "three nearest already claimed" },
-  { label: "25 rides", n: 25, hint: "first page of the 2 km ring taken, page grows" },
-  { label: "60 rides", n: 60, hint: "grows to 64 then widens to 4 km" },
+  { label: "none", n: 0, hint: "no race: the nearest driver wins on the first claim" },
+  { label: "3 rides", n: 3, hint: "three rides win the three nearest between the search and your claim; the fourth is yours" },
+  { label: "25 rides", n: 25, hint: "the 1 km ring is taken out from under you, the matcher widens to 2 km" },
+  { label: "60 rides", n: 60, hint: "a full page of 20 is taken: the page grows to 40 inside the ring before widening" },
 ];
 
 interface DriverDot {
@@ -58,15 +58,31 @@ export function GeoMatch() {
   const runAt = (lat: number, lng: number) => {
     const index = new MemoryDriverIndex(() => 0);
     for (const d of drivers) index.upsert({ driverId: d.id, cityId: CITY.id, lat: d.lat, lng: d.lng, status: "AVAILABLE", reportedAt: 0 }, 15_000);
-    // Other rides that raced ahead of this one hold the N nearest drivers.
-    const racing = index.nearby(CITY.id, lat, lng, 20_000, CONTENTION[contention].n);
+    // Other rides race this one: after each GEOSEARCH, the next N of them win the nearest results
+    // before this matcher thread reaches its claim script. That is the race the real system sees,
+    // and why a taken candidate simply falls through to the next one.
+    let racing = CONTENTION[contention].n;
     const others = new Set<string>();
-    racing.forEach((r, i) => {
-      index.claim(CITY.id, r.driverId, `ride-other-${i}`, 20_000);
-      others.add(r.driverId);
-    });
+    const racy = {
+      upsert: index.upsert.bind(index),
+      claim: index.claim.bind(index),
+      release: index.release.bind(index),
+      claimedBy: index.claimedBy.bind(index),
+      size: index.size.bind(index),
+      nearby: (cityId: number, la: number, ln: number, radius: number, limit: number) => {
+        const hits = index.nearby(cityId, la, ln, radius, limit);
+        for (const h of hits) {
+          if (racing <= 0) break;
+          if (index.claim(cityId, h.driverId, `ride-other-${others.size}`, 20_000) === "CLAIMED") {
+            others.add(h.driverId);
+            racing--;
+          }
+        }
+        return hits;
+      },
+    };
     const events: MatchTrace[] = [];
-    new Matcher(index, DEFAULT_PROPS, () => 0).match(
+    new Matcher(racy, DEFAULT_PROPS, () => 0).match(
       { rideId: "ride-you", riderId: "you", cityId: CITY.id, pickupLat: lat, pickupLng: lng, dropoffLat: lat, dropoffLng: lng, requestedAt: 0 },
       (t) => events.push(t),
     );
@@ -135,7 +151,8 @@ export function GeoMatch() {
           <code>GEOSEARCH</code> returns the nearest drivers inside the ring, sorted ascending. The matcher tries to claim
           each one with the Lua script (<code>SET claim NX PX ttl</code>). A driver taken between the search and the claim
           simply falls through. When a full page of a ring was taken, the page doubles (20, 40, 64) before the radius widens
-          (1 km, 2 km, 4 km, 8 km). Click the map to drop a pickup.
+          (1 km, 2 km, 4 km, 8 km). Click the map to drop a pickup; the contention control makes other rides win drivers
+          between your search and your claim.
         </p>
 
         <div className="geo-grid">
