@@ -50,7 +50,8 @@ make k8s-e2e    # kind cluster, deploy, load, rolling update with zero request e
 ```
 
 `make demo` brings up Redpanda, two MySQL 8 shards, Redis 7, and the three services, then runs
-the load generator: 300 simulated drivers per city across two cities pinging their position every
+the load generator. The compose file caps every JVM at 160 MB heap and MySQL at a 32 MB buffer
+pool so the whole stack fits in a 2 GiB Docker VM; set `JAVA_OPTS` to lift the cap. The run is: 300 simulated drivers per city across two cities pinging their position every
 second, and ride requests at 10 per second for 60 seconds. This is the output of a real run on a
 laptop (Apple M2 Pro, Docker under Colima):
 
@@ -136,6 +137,8 @@ ride got a decision, and that each shard holds exactly one city. CI runs this on
 <!-- rollout-evidence:end -->
 
 ## Tests
+
+32 unit tests (Surefire) and 13 integration tests (Failsafe, Testcontainers) across the five modules.
 
 * Unit: shard routing determinism and overrides, haversine, radius expansion, matcher policy
   (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides), stats
