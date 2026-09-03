@@ -2,7 +2,7 @@ import { Rng } from "./rng";
 
 /**
  * Deployment rollout model with the deploy/k8s settings: RollingUpdate, maxUnavailable 0,
- * maxSurge 1, readiness probe every 5 s, preStop sleep 5 s, graceful shutdown. A new pod must
+ * maxSurge 1, readiness probe every 5 s, preStop sleep 10 s, graceful shutdown. A new pod must
  * pass readiness before an old one is terminated, and requests only ever route to Ready pods
  * that are still in the Service endpoints.
  */
@@ -37,7 +37,7 @@ export interface RolloutEvent {
   text: string;
 }
 
-export const PRESTOP_MS = 5000;
+export const PRESTOP_MS = 10_000;
 export const READINESS_PERIOD_MS = 5000;
 export const GRACE_MS = 30_000;
 
@@ -203,7 +203,7 @@ export class RolloutSim {
       const victim = oldActive[0];
       victim.phase = "Terminating";
       victim.terminatingAt = this.now;
-      this.log(`${victim.name} terminating: removed from endpoints, preStop sleep 5`);
+      this.log(`${victim.name} terminating: removed from endpoints, preStop sleep 10`);
     }
   }
 
