@@ -1,0 +1,47 @@
+server:
+  port: ${PORT:8081}
+  shutdown: graceful
+
+spring:
+  application:
+    name: rider-request-service
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        linger.ms: 5
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+dispatchgrid:
+  shards:
+    - name: shard-0
+      url: ${SHARD0_URL:jdbc:mysql://localhost:3306/dispatch}
+      username: ${SHARD_USERNAME:dispatch}
+      password: ${SHARD_PASSWORD:dispatch}
+    - name: shard-1
+      url: ${SHARD1_URL:jdbc:mysql://localhost:3307/dispatch}
+      username: ${SHARD_USERNAME:dispatch}
+      password: ${SHARD_PASSWORD:dispatch}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+      group:
+        readiness:
+          include: readinessState,kafka,shards
+        liveness:
+          include: livenessState
