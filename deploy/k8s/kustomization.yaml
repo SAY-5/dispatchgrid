@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dispatchgrid
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - redpanda.yaml
+  - mysql.yaml
+  - redis.yaml
+  - rider-request-service.yaml
+  - driver-location-service.yaml
+  - matching-service.yaml
+images:
+  - name: dispatchgrid/rider-request-service
+    newTag: dev
+  - name: dispatchgrid/driver-location-service
+    newTag: dev
+  - name: dispatchgrid/matching-service
+    newTag: dev

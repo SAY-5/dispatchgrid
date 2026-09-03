@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rider-request-service
+  labels:
+    app: rider-request-service
+spec:
+  selector:
+    app: rider-request-service
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rider-request-service
+  labels:
+    app: rider-request-service
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: rider-request-service
+  template:
+    metadata:
+      labels:
+        app: rider-request-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8081"
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: rider-request-service
+          image: dispatchgrid/rider-request-service:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8081
+          env:
+            - name: PORT
+              value: "8081"
+            - name: SHARD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dispatchgrid-shard-credentials
+                  key: SHARD_PASSWORD
+          envFrom:
+            - configMapRef:
+                name: dispatchgrid-env
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 4
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 4
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              memory: 768Mi

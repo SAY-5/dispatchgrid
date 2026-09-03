@@ -1,0 +1,40 @@
+# Applied by scripts/k8s-e2e.sh; not part of the kustomization.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: loadgen
+  namespace: dispatchgrid
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: loadgen
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: loadgen
+          image: dispatchgrid/loadgen:TAG_PLACEHOLDER
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RIDER_URL
+              value: http://rider-request-service:8081
+            - name: DRIVER_URL
+              value: http://driver-location-service:8082
+            - name: MATCHING_URL
+              value: http://matching-service:8083
+            - name: DURATION_SECONDS
+              value: "DURATION_PLACEHOLDER"
+            - name: RIDES_PER_SECOND
+              value: "10"
+            - name: DRIVERS_PER_CITY
+              value: "300"
+            - name: SUMMARY_OUT
+              value: /tmp/loadgen-summary.json
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
