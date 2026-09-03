@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,6 +33,7 @@ public class DriverController {
   private final DriverConfig.Props props;
   private final Clock clock;
 
+  @Autowired
   public DriverController(
       DriverIndex index, KafkaTemplate<String, Object> kafka, DriverConfig.Props props) {
     this(index, kafka, props, Clock.systemUTC());
