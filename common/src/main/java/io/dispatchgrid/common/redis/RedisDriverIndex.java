@@ -9,7 +9,6 @@ import java.util.Map;
 import org.springframework.data.geo.Distance;
 import org.springframework.data.geo.GeoResult;
 import org.springframework.data.geo.GeoResults;
-import org.springframework.data.geo.Metrics;
 import org.springframework.data.geo.Point;
 import org.springframework.data.redis.connection.RedisGeoCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -108,7 +107,7 @@ public class RedisDriverIndex implements DriverIndex {
             .search(
                 geoKey(cityId),
                 GeoReference.fromCoordinate(lng, lat),
-                new Distance(radiusMeters, Metrics.METERS),
+                new Distance(radiusMeters, RedisGeoCommands.DistanceUnit.METERS),
                 RedisGeoCommands.GeoSearchCommandArgs.newGeoSearchArgs()
                     .includeDistance()
                     .sortAscending()
@@ -118,7 +117,7 @@ public class RedisDriverIndex implements DriverIndex {
       return out;
     }
     for (GeoResult<RedisGeoCommands.GeoLocation<String>> r : results) {
-      out.add(new NearbyDriver(r.getContent().getName(), r.getDistance().in(Metrics.METERS).getValue()));
+      out.add(new NearbyDriver(r.getContent().getName(), r.getDistance().in(RedisGeoCommands.DistanceUnit.METERS).getValue()));
     }
     return out;
   }
