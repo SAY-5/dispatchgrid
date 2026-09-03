@@ -1,5 +1,6 @@
 import { Nav } from "./components/Nav";
 import { Hero } from "./sections/Hero";
+import { Streams } from "./sections/Streams";
 import "./styles/sections.css";
 
 export function App() {
@@ -11,6 +12,7 @@ export function App() {
       <Nav />
       <main>
         <Hero />
+        <Streams />
       </main>
     </>
   );
