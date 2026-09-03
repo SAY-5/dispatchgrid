@@ -1,0 +1,184 @@
+package io.dispatchgrid.common.shard;
+
+import io.dispatchgrid.common.model.Match;
+import io.dispatchgrid.common.model.RideRequest;
+import io.dispatchgrid.common.model.TripStatus;
+import io.dispatchgrid.common.serde.Json;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+
+/** Trip persistence. Every method resolves the shard from the city id first. */
+public class TripRepository {
+  private final CityShardRouter router;
+
+  public TripRepository(CityShardRouter router) {
+    this.router = router;
+  }
+
+  public record Trip(
+      String rideId,
+      String riderId,
+      int cityId,
+      TripStatus status,
+      double pickupLat,
+      double pickupLng,
+      double dropoffLat,
+      double dropoffLng,
+      String driverId,
+      Integer matchLatencyMs,
+      Integer searchRadiusMeters,
+      Instant requestedAt,
+      Instant matchedAt,
+      int shard) {}
+
+  private JdbcTemplate jdbc(int cityId) {
+    return new JdbcTemplate(router.dataSourceFor(cityId));
+  }
+
+  public void insertRequested(RideRequest r) {
+    JdbcTemplate jdbc = jdbc(r.cityId());
+    jdbc.update(
+        """
+        INSERT INTO trips (ride_id, rider_id, city_id, status, pickup_lat, pickup_lng,
+                           dropoff_lat, dropoff_lng, requested_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        r.rideId(),
+        r.riderId(),
+        r.cityId(),
+        TripStatus.REQUESTED.name(),
+        r.pickupLat(),
+        r.pickupLng(),
+        r.dropoffLat(),
+        r.dropoffLng(),
+        Timestamp.from(r.requestedAt()));
+    insertEvent(jdbc, r.rideId(), r.cityId(), "ride.requested", r);
+  }
+
+  /** Marks the trip matched. Returns false if the row was not in REQUESTED state. */
+  public boolean markMatched(Match m) {
+    JdbcTemplate jdbc = jdbc(m.cityId());
+    int updated =
+        jdbc.update(
+            """
+            UPDATE trips SET status = ?, driver_id = ?, match_latency_ms = ?, search_radius_m = ?,
+                             matched_at = ?
+            WHERE ride_id = ? AND status = ?
+            """,
+            TripStatus.MATCHED.name(),
+            m.driverId(),
+            (int) m.matchLatencyMs(),
+            m.searchRadiusMeters(),
+            Timestamp.from(m.matchedAt()),
+            m.rideId(),
+            TripStatus.REQUESTED.name());
+    if (updated == 0) {
+      return false;
+    }
+    jdbc.update(
+        """
+        INSERT INTO drivers (driver_id, city_id, total_matches, last_matched_at, last_ride_id)
+        VALUES (?, ?, 1, ?, ?)
+        ON DUPLICATE KEY UPDATE total_matches = total_matches + 1,
+                                last_matched_at = VALUES(last_matched_at),
+                                last_ride_id = VALUES(last_ride_id)
+        """,
+        m.driverId(),
+        m.cityId(),
+        Timestamp.from(m.matchedAt()),
+        m.rideId());
+    insertEvent(jdbc, m.rideId(), m.cityId(), "ride.matched", m);
+    return true;
+  }
+
+  public boolean markUnmatched(String rideId, int cityId, Object payload) {
+    JdbcTemplate jdbc = jdbc(cityId);
+    int updated =
+        jdbc.update(
+            "UPDATE trips SET status = ? WHERE ride_id = ? AND status = ?",
+            TripStatus.UNMATCHED.name(),
+            rideId,
+            TripStatus.REQUESTED.name());
+    if (updated == 0) {
+      return false;
+    }
+    insertEvent(jdbc, rideId, cityId, "ride.unmatched", payload);
+    return true;
+  }
+
+  public Optional<Trip> find(int cityId, String rideId) {
+    int shard = router.shardIndexFor(cityId);
+    List<Trip> rows =
+        jdbc(cityId).query("SELECT * FROM trips WHERE ride_id = ?", mapper(shard), rideId);
+    return rows.stream().findFirst();
+  }
+
+  /** Looks in every shard; used when the caller does not know the city. */
+  public Optional<Trip> findAnywhere(String rideId) {
+    for (int i = 0; i < router.shardCount(); i++) {
+      List<Trip> rows =
+          new JdbcTemplate(router.shard(i))
+              .query("SELECT * FROM trips WHERE ride_id = ?", mapper(i), rideId);
+      if (!rows.isEmpty()) {
+        return Optional.of(rows.get(0));
+      }
+    }
+    return Optional.empty();
+  }
+
+  /** Per-shard counts keyed by "shard-i" then "city:status". */
+  public Map<String, Map<String, Long>> countsByShard() {
+    Map<String, Map<String, Long>> out = new LinkedHashMap<>();
+    for (int i = 0; i < router.shardCount(); i++) {
+      Map<String, Long> counts = new LinkedHashMap<>();
+      new JdbcTemplate(router.shard(i))
+          .query(
+              "SELECT city_id, status, COUNT(*) AS n FROM trips GROUP BY city_id, status"
+                  + " ORDER BY city_id, status",
+              rs -> {
+                counts.put(rs.getInt("city_id") + ":" + rs.getString("status"), rs.getLong("n"));
+              });
+      out.put("shard-" + i, counts);
+    }
+    return out;
+  }
+
+  private static void insertEvent(
+      JdbcTemplate jdbc, String rideId, int cityId, String type, Object payload) {
+    jdbc.update(
+        "INSERT INTO ride_events (ride_id, city_id, event_type, payload) VALUES (?, ?, ?, ?)",
+        rideId,
+        cityId,
+        type,
+        new String(Json.write(payload)));
+  }
+
+  private static RowMapper<Trip> mapper(int shard) {
+    return (rs, i) -> {
+      Timestamp matched = rs.getTimestamp("matched_at");
+      Integer latency = rs.getObject("match_latency_ms", Integer.class);
+      Integer radius = rs.getObject("search_radius_m", Integer.class);
+      return new Trip(
+          rs.getString("ride_id"),
+          rs.getString("rider_id"),
+          rs.getInt("city_id"),
+          TripStatus.valueOf(rs.getString("status")),
+          rs.getDouble("pickup_lat"),
+          rs.getDouble("pickup_lng"),
+          rs.getDouble("dropoff_lat"),
+          rs.getDouble("dropoff_lng"),
+          rs.getString("driver_id"),
+          latency,
+          radius,
+          rs.getTimestamp("requested_at").toInstant(),
+          matched == null ? null : matched.toInstant(),
+          shard);
+    };
+  }
+}
