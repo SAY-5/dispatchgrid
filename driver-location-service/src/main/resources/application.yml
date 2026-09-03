@@ -1,0 +1,40 @@
+server:
+  port: ${PORT:8082}
+  shutdown: graceful
+
+spring:
+  application:
+    name: driver-location-service
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: 1
+      properties:
+        linger.ms: 20
+        batch.size: 65536
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+driver-location:
+  heartbeat-ttl: ${DRIVER_HEARTBEAT_TTL:15s}
+  max-nearby: 50
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+      group:
+        readiness:
+          include: readinessState,kafka,redis
+        liveness:
+          include: livenessState
