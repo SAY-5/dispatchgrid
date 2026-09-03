@@ -1,0 +1,58 @@
+server:
+  port: ${PORT:8083}
+  shutdown: graceful
+
+spring:
+  application:
+    name: matching-service
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    streams:
+      application-id: matching-service
+      properties:
+        num.stream.threads: ${STREAM_THREADS:3}
+        processing.guarantee: at_least_once
+        commit.interval.ms: 200
+        default.deserialization.exception.handler: org.apache.kafka.streams.errors.LogAndContinueExceptionHandler
+        auto.offset.reset: earliest
+        state.dir: ${STREAMS_STATE_DIR:/tmp/kafka-streams}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+dispatchgrid:
+  shards:
+    - name: shard-0
+      url: ${SHARD0_URL:jdbc:mysql://localhost:3306/dispatch}
+      username: ${SHARD_USERNAME:dispatch}
+      password: ${SHARD_PASSWORD:dispatch}
+    - name: shard-1
+      url: ${SHARD1_URL:jdbc:mysql://localhost:3307/dispatch}
+      username: ${SHARD_USERNAME:dispatch}
+      password: ${SHARD_PASSWORD:dispatch}
+
+matching:
+  initial-radius-meters: ${MATCH_INITIAL_RADIUS_M:1000}
+  radius-factor: 2.0
+  max-radius-meters: ${MATCH_MAX_RADIUS_M:8000}
+  candidates-per-radius: 20
+  claim-ttl: ${MATCH_CLAIM_TTL:20s}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+      group:
+        readiness:
+          include: readinessState,kafka,redis,shards,streams
+        liveness:
+          include: livenessState
