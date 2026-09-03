@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dispatchgrid-env
+data:
+  KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  SHARD0_URL: jdbc:mysql://mysql-shard-0:3306/dispatch
+  SHARD1_URL: jdbc:mysql://mysql-shard-1:3306/dispatch
+  SHARD_USERNAME: dispatch
+  MATCH_CLAIM_TTL: 20s
+  DRIVER_HEARTBEAT_TTL: 15s
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dispatchgrid-shard-credentials
+type: Opaque
+stringData:
+  SHARD_PASSWORD: dispatch
+  MYSQL_ROOT_PASSWORD: root
