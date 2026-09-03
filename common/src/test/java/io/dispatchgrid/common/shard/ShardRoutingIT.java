@@ -6,6 +6,7 @@ import io.dispatchgrid.common.TestApp;
 import io.dispatchgrid.common.model.RideRequest;
 import io.dispatchgrid.common.model.TripStatus;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +22,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest(
     classes = TestApp.class,
     properties =
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration")
+        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,"
+            + "org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration")
 class ShardRoutingIT {
 
   @Container static MySQLContainer<?> shard0 = new MySQLContainer<>("mysql:8.0");
@@ -49,9 +51,17 @@ class ShardRoutingIT {
           jdbc.queryForObject(
               "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1", Integer.class);
       assertThat(applied).isGreaterThanOrEqualTo(1);
-      assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM trips", Integer.class)).isZero();
-      assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM drivers", Integer.class)).isZero();
-      assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ride_events", Integer.class)).isZero();
+      List<String> tables =
+          jdbc.queryForList(
+              "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()",
+              String.class);
+      assertThat(tables).contains("trips", "drivers", "ride_events");
+      List<String> indexes =
+          jdbc.queryForList(
+              "SELECT DISTINCT index_name FROM information_schema.statistics"
+                  + " WHERE table_schema = DATABASE() AND table_name = 'trips'",
+              String.class);
+      assertThat(indexes).contains("idx_trips_city_status_requested", "idx_trips_driver");
     }
   }
 
