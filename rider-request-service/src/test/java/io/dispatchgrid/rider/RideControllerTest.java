@@ -90,7 +90,7 @@ class RideControllerTest {
   void readsFromTheCityShardWhenCityIsGiven() throws Exception {
     var trip =
         new TripRepository.Trip(
-            "abc", "r1", 2, TripStatus.MATCHED, 1, 2, 3, 4, "d9", 40, 1000, NOW, NOW, 0);
+            "abc", "r1", 2, TripStatus.MATCHED, 1, 2, 3, 4, "d9", 40, 1000, 1.0, NOW, NOW, 0);
     when(trips.find(2, "abc")).thenReturn(Optional.of(trip));
     mvc.perform(get("/rides/abc").param("city", "2"))
         .andExpect(status().isOk())

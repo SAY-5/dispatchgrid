@@ -33,6 +33,7 @@ public class TripRepository {
       String driverId,
       Integer matchLatencyMs,
       Integer searchRadiusMeters,
+      Double surgeMultiplier,
       Instant requestedAt,
       Instant matchedAt,
       int shard) {}
@@ -68,13 +69,14 @@ public class TripRepository {
         jdbc.update(
             """
             UPDATE trips SET status = ?, driver_id = ?, match_latency_ms = ?, search_radius_m = ?,
-                             matched_at = ?
+                             surge_multiplier = ?, matched_at = ?
             WHERE ride_id = ? AND status = ?
             """,
             TripStatus.MATCHED.name(),
             m.driverId(),
             (int) m.matchLatencyMs(),
             m.searchRadiusMeters(),
+            m.surgeMultiplier(),
             Timestamp.from(m.matchedAt()),
             m.rideId(),
             TripStatus.REQUESTED.name());
@@ -164,6 +166,7 @@ public class TripRepository {
       Timestamp matched = rs.getTimestamp("matched_at");
       Integer latency = rs.getObject("match_latency_ms", Integer.class);
       Integer radius = rs.getObject("search_radius_m", Integer.class);
+      Double surge = rs.getObject("surge_multiplier", Double.class);
       return new Trip(
           rs.getString("ride_id"),
           rs.getString("rider_id"),
@@ -176,6 +179,7 @@ public class TripRepository {
           rs.getString("driver_id"),
           latency,
           radius,
+          surge,
           rs.getTimestamp("requested_at").toInstant(),
           matched == null ? null : matched.toInstant(),
           shard);
