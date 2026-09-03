@@ -1,8 +1,10 @@
+import { Footer } from "./components/Footer";
 import { Nav } from "./components/Nav";
-import { Hero } from "./sections/Hero";
-import { Streams } from "./sections/Streams";
 import { GeoMatch } from "./sections/GeoMatch";
+import { Hero } from "./sections/Hero";
+import { LoadRun } from "./sections/LoadRun";
 import { Rollout } from "./sections/Rollout";
+import { Streams } from "./sections/Streams";
 import "./styles/sections.css";
 
 export function App() {
@@ -17,7 +19,9 @@ export function App() {
         <Streams />
         <GeoMatch />
         <Rollout />
+        <LoadRun />
       </main>
+      <Footer />
     </>
   );
 }
