@@ -417,3 +417,163 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* rollout */
+.rollout-bar {
+  margin-top: 40px;
+  padding: 22px 26px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 20px;
+  align-items: center;
+}
+.rollout-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.stat .value.ok {
+  color: var(--ok);
+  text-shadow: 0 0 22px rgba(127, 224, 195, 0.4);
+}
+.stat .value.bad {
+  color: var(--taken);
+}
+.deployments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+.deployment {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 250px;
+}
+.deployment-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.deployment-head h3 {
+  font-size: 16px;
+}
+.deployment-head .mono {
+  font-size: 11.5px;
+  margin-top: 4px;
+}
+.chip-ok {
+  border-color: rgba(127, 224, 195, 0.5);
+  color: var(--ok);
+}
+.pods {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pod {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  grid-template-areas: "light name phase" "light served served";
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(7, 11, 20, 0.5);
+  animation: pop 0.4s var(--ease);
+  transition: border-color 0.3s, opacity 0.3s;
+}
+.pod.new {
+  border-color: rgba(76, 141, 255, 0.5);
+}
+.pod.terminating {
+  opacity: 0.6;
+}
+.pod.gone {
+  opacity: 0.25;
+}
+.pod-light {
+  grid-area: light;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-mute);
+}
+.pod.ready .pod-light {
+  background: var(--ok);
+  box-shadow: 0 0 10px var(--ok);
+}
+.pod.starting .pod-light,
+.pod.pending .pod-light {
+  background: var(--warn);
+  animation: blink 1s infinite;
+}
+.pod.terminating .pod-light {
+  background: var(--taken);
+}
+@keyframes blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+.pod-name {
+  grid-area: name;
+  font-size: 11.5px;
+  color: var(--ice);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pod-phase {
+  grid-area: phase;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.pod-served {
+  grid-area: served;
+  font-size: 11px;
+  color: var(--text-mute);
+}
+.small {
+  font-size: 12px;
+}
+.rollout-log {
+  margin-top: 18px;
+  padding: 20px 22px;
+}
+.rollout-log ul {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+.rollout-log .mono {
+  display: inline-block;
+  min-width: 52px;
+  font-size: 12px;
+}
+@media (max-width: 960px) {
+  .rollout-bar {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .rollout-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+  .deployments {
+    grid-template-columns: 1fr;
+  }
+}
