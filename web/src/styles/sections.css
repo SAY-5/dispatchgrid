@@ -159,6 +159,16 @@
   }
 }
 @media (max-width: 520px) {
+  .brand span:last-child {
+    display: none;
+  }
+  .nav ul {
+    gap: 0;
+  }
+  .nav ul a {
+    padding: 8px 7px;
+    font-size: 12.5px;
+  }
   .nav ul li:nth-child(n + 4):not(:last-child) {
     display: none;
   }
