@@ -9,9 +9,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Glue between the stream and the stores: run the matcher, persist the outcome in the city
- * shard, and update stats. Delivery is at-least-once, so a redelivered request whose trip is no
- * longer REQUESTED releases the claim it just took and is dropped instead of being emitted twice.
+ * Glue between the stream and the stores: run the matcher, persist the outcome in the city shard,
+ * and update stats. Delivery is at-least-once, so a redelivered request whose trip is no longer
+ * REQUESTED releases the claim it just took and is dropped instead of being emitted twice.
  */
 public class MatchService {
   private static final Logger log = LoggerFactory.getLogger(MatchService.class);

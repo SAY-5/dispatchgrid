@@ -27,7 +27,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class RedisDriverIndexIT {
 
   @Container
-  static GenericContainer<?> redis = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+  static GenericContainer<?> redis =
+      new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
 
   static LettuceConnectionFactory factory;
   static StringRedisTemplate template;
@@ -70,8 +71,12 @@ class RedisDriverIndexIT {
     List<NearbyDriver> hits = index.nearby(1, LAT, LNG, 1000, 10);
     assertThat(hits).extracting(NearbyDriver::driverId).containsExactly("near", "mid");
     assertThat(hits.get(0).distanceMeters()).isBetween(90.0, 110.0);
-    assertThat(index.nearby(1, LAT, LNG, 5000, 1)).extracting(NearbyDriver::driverId).containsExactly("near");
-    assertThat(index.nearby(2, LAT, LNG, 1000, 10)).extracting(NearbyDriver::driverId).containsExactly("other-city");
+    assertThat(index.nearby(1, LAT, LNG, 5000, 1))
+        .extracting(NearbyDriver::driverId)
+        .containsExactly("near");
+    assertThat(index.nearby(2, LAT, LNG, 1000, 10))
+        .extracting(NearbyDriver::driverId)
+        .containsExactly("other-city");
     assertThat(index.size(1)).isEqualTo(3);
   }
 
@@ -89,31 +94,40 @@ class RedisDriverIndexIT {
   void offlineRemovesDriver() {
     index.upsert(at("d1", 1, 10, 0), Duration.ofMinutes(1));
     index.upsert(
-        new DriverPosition("d1", 1, LAT, LNG, DriverStatus.OFFLINE, Instant.now()), Duration.ofMinutes(1));
+        new DriverPosition("d1", 1, LAT, LNG, DriverStatus.OFFLINE, Instant.now()),
+        Duration.ofMinutes(1));
     assertThat(index.size(1)).isZero();
   }
 
   @Test
   void claimIsExclusiveAndReleasable() {
     index.upsert(at("d1", 1, 10, 0), Duration.ofMinutes(1));
-    assertThat(index.claim(1, "d1", "ride-a", Duration.ofSeconds(10))).isEqualTo(ClaimResult.CLAIMED);
+    assertThat(index.claim(1, "d1", "ride-a", Duration.ofSeconds(10)))
+        .isEqualTo(ClaimResult.CLAIMED);
     assertThat(index.claim(1, "d1", "ride-b", Duration.ofSeconds(10))).isEqualTo(ClaimResult.TAKEN);
     assertThat(index.claimedBy(1, "d1")).isEqualTo("ride-a");
     assertThat(index.nearby(1, LAT, LNG, 1000, 10)).isEmpty();
     index.upsert(at("d1", 1, 20, 0), Duration.ofMinutes(1));
-    assertThat(index.nearby(1, LAT, LNG, 1000, 10)).as("pings do not resurface a claimed driver").isEmpty();
+    assertThat(index.nearby(1, LAT, LNG, 1000, 10))
+        .as("pings do not resurface a claimed driver")
+        .isEmpty();
     assertThat(index.release(1, "d1", "ride-b")).isFalse();
     assertThat(index.release(1, "d1", "ride-a")).isTrue();
-    assertThat(index.nearby(1, LAT, LNG, 1000, 10)).extracting(NearbyDriver::driverId).containsExactly("d1");
-    assertThat(index.claim(1, "d1", "ride-b", Duration.ofSeconds(10))).isEqualTo(ClaimResult.CLAIMED);
+    assertThat(index.nearby(1, LAT, LNG, 1000, 10))
+        .extracting(NearbyDriver::driverId)
+        .containsExactly("d1");
+    assertThat(index.claim(1, "d1", "ride-b", Duration.ofSeconds(10)))
+        .isEqualTo(ClaimResult.CLAIMED);
   }
 
   @Test
   void claimExpiresAfterTtl() throws InterruptedException {
     index.upsert(at("d1", 1, 10, 0), Duration.ofMinutes(1));
-    assertThat(index.claim(1, "d1", "ride-a", Duration.ofMillis(300))).isEqualTo(ClaimResult.CLAIMED);
+    assertThat(index.claim(1, "d1", "ride-a", Duration.ofMillis(300)))
+        .isEqualTo(ClaimResult.CLAIMED);
     Thread.sleep(500);
-    assertThat(index.claim(1, "d1", "ride-b", Duration.ofSeconds(10))).isEqualTo(ClaimResult.CLAIMED);
+    assertThat(index.claim(1, "d1", "ride-b", Duration.ofSeconds(10)))
+        .isEqualTo(ClaimResult.CLAIMED);
   }
 
   @Test

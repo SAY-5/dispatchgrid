@@ -9,7 +9,8 @@ class RadiusExpansionTest {
 
   @Test
   void doublesUntilCapAndEndsExactlyAtCap() {
-    assertThat(new RadiusExpansion(500, 2.0, 5000).radii()).containsExactly(500, 1000, 2000, 4000, 5000);
+    assertThat(new RadiusExpansion(500, 2.0, 5000).radii())
+        .containsExactly(500, 1000, 2000, 4000, 5000);
   }
 
   @Test

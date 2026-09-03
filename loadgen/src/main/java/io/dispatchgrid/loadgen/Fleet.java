@@ -65,7 +65,9 @@ final class Fleet {
     this.driverUrl = driverUrl;
     for (City c : cities) {
       for (int i = 0; i < perCity; i++) {
-        drivers.add(new Driver("d-" + c.id() + "-" + i, c, new java.util.Random(seed + c.id() * 100_000L + i)));
+        drivers.add(
+            new Driver(
+                "d-" + c.id() + "-" + i, c, new java.util.Random(seed + c.id() * 100_000L + i)));
       }
     }
   }

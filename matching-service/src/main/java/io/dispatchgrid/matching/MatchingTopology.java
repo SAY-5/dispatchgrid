@@ -23,8 +23,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafkaStreams;
 
 /**
- * ride-requests -> match -> ride-matches | ride-unmatched. Records stay keyed by city id, so all
- * of a city's decisions are made in order on one stream task while cities run in parallel.
+ * ride-requests -> match -> ride-matches | ride-unmatched. Records stay keyed by city id, so all of
+ * a city's decisions are made in order on one stream task while cities run in parallel.
  */
 @Configuration
 @EnableKafkaStreams

@@ -88,16 +88,28 @@ class ShardRoutingIT {
     var counts = trips.countsByShard();
     assertThat(counts.get("shard-1")).containsEntry("1:REQUESTED", 1L);
     assertThat(counts.get("shard-0")).containsEntry("2:REQUESTED", 1L);
-    assertThat(s1.queryForObject("SELECT COUNT(*) FROM ride_events WHERE ride_id = ?", Integer.class, city1.rideId()))
+    assertThat(
+            s1.queryForObject(
+                "SELECT COUNT(*) FROM ride_events WHERE ride_id = ?",
+                Integer.class,
+                city1.rideId()))
         .isEqualTo(1);
   }
 
   private static int count(JdbcTemplate jdbc, String rideId) {
-    return jdbc.queryForObject("SELECT COUNT(*) FROM trips WHERE ride_id = ?", Integer.class, rideId);
+    return jdbc.queryForObject(
+        "SELECT COUNT(*) FROM trips WHERE ride_id = ?", Integer.class, rideId);
   }
 
   private static RideRequest request(int cityId) {
     return new RideRequest(
-        UUID.randomUUID().toString(), "rider-" + cityId, cityId, 47.60, -122.33, 47.61, -122.34, Instant.now());
+        UUID.randomUUID().toString(),
+        "rider-" + cityId,
+        cityId,
+        47.60,
+        -122.33,
+        47.61,
+        -122.34,
+        Instant.now());
   }
 }

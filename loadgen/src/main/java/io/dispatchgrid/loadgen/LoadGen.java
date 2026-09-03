@@ -77,10 +77,14 @@ public final class LoadGen {
     summary.put("p50LatencyMs", stats.get("p50LatencyMs").asLong());
     summary.put("p95LatencyMs", stats.get("p95LatencyMs").asLong());
     summary.put("p99LatencyMs", stats.get("p99LatencyMs").asLong());
-    summary.put("submittedByShard", new TreeMap<>(rides.byShard.entrySet().stream()
-        .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().get()))));
+    summary.put(
+        "submittedByShard",
+        new TreeMap<>(
+            rides.byShard.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().get()))));
     summary.put("tripsByShard", shards);
-    Files.writeString(Path.of(opt.out()), Http.JSON.writerWithDefaultPrettyPrinter().writeValueAsString(summary));
+    Files.writeString(
+        Path.of(opt.out()), Http.JSON.writerWithDefaultPrettyPrinter().writeValueAsString(summary));
 
     print(summary, cities, opt, runSeconds);
     System.exit(rides.errors.get() == 0 && fleet.pingErrors.get() == 0 ? 0 : 2);
@@ -147,8 +151,10 @@ public final class LoadGen {
   }
 
   @SuppressWarnings("unchecked")
-  private static void print(Map<String, Object> s, List<City> cities, Options opt, long runSeconds) {
-    String cityNames = cities.stream().map(c -> c.id() + "=" + c.name()).collect(Collectors.joining(", "));
+  private static void print(
+      Map<String, Object> s, List<City> cities, Options opt, long runSeconds) {
+    String cityNames =
+        cities.stream().map(c -> c.id() + "=" + c.name()).collect(Collectors.joining(", "));
     StringBuilder shards = new StringBuilder();
     ((Map<String, Map<Integer, Long>>) s.get("tripsByShard"))
         .forEach(
@@ -164,13 +170,23 @@ public final class LoadGen {
             });
     System.out.println();
     System.out.println("== dispatchgrid load summary ==");
-    System.out.printf("run                 %d s at %d rides/s, cities %s%n", opt.durationSeconds(), opt.ridesPerSecond(), cityNames);
-    System.out.printf("drivers             %d (%d per city), pings ok=%d errors=%d%n", s.get("drivers"), opt.driversPerCity(), s.get("pingsOk"), s.get("pingErrors"));
-    System.out.printf("rides submitted     %d, http errors=%d, by shard %s%n", s.get("ridesSubmitted"), s.get("rideErrors"), s.get("submittedByShard"));
+    System.out.printf(
+        "run                 %d s at %d rides/s, cities %s%n",
+        opt.durationSeconds(), opt.ridesPerSecond(), cityNames);
+    System.out.printf(
+        "drivers             %d (%d per city), pings ok=%d errors=%d%n",
+        s.get("drivers"), opt.driversPerCity(), s.get("pingsOk"), s.get("pingErrors"));
+    System.out.printf(
+        "rides submitted     %d, http errors=%d, by shard %s%n",
+        s.get("ridesSubmitted"), s.get("rideErrors"), s.get("submittedByShard"));
     System.out.printf("matched             %d%n", s.get("matched"));
     System.out.printf("unmatched           %d%n", s.get("unmatched"));
-    System.out.printf("matches per minute  %d over the %d s run (matching-service trailing 60 s window: %d)%n", s.get("matchesPerMinuteRun"), runSeconds, s.get("matchesPerMinuteWindow"));
-    System.out.printf("match latency       p50=%d ms  p95=%d ms  p99=%d ms%n", s.get("p50LatencyMs"), s.get("p95LatencyMs"), s.get("p99LatencyMs"));
+    System.out.printf(
+        "matches per minute  %d over the %d s run (matching-service trailing 60 s window: %d)%n",
+        s.get("matchesPerMinuteRun"), runSeconds, s.get("matchesPerMinuteWindow"));
+    System.out.printf(
+        "match latency       p50=%d ms  p95=%d ms  p99=%d ms%n",
+        s.get("p50LatencyMs"), s.get("p95LatencyMs"), s.get("p99LatencyMs"));
     System.out.printf("shard distribution  %s%n", shards);
     System.out.println("SUMMARY_JSON " + toJson(s));
   }

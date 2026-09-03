@@ -40,7 +40,8 @@ class DriverLocationServiceIT {
   static final double LNG = -122.3321;
 
   @Container
-  static GenericContainer<?> redis = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+  static GenericContainer<?> redis =
+      new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
 
   @Container
   static RedpandaContainer kafka = new RedpandaContainer("redpandadata/redpanda:v24.3.18");
@@ -63,7 +64,8 @@ class DriverLocationServiceIT {
 
     JsonNode hits =
         rest.getForObject(
-            "/drivers/nearby?city=2&lat=" + LAT + "&lng=" + LNG + "&radius=2000&limit=10", JsonNode.class);
+            "/drivers/nearby?city=2&lat=" + LAT + "&lng=" + LNG + "&radius=2000&limit=10",
+            JsonNode.class);
     assertThat(hits).extracting(n -> n.get("driverId").asText()).containsExactly("d-near", "d-mid");
     assertThat(rest.getForObject("/drivers/count?city=2", JsonNode.class).get("drivers").asLong())
         .isEqualTo(3);
@@ -77,7 +79,8 @@ class DriverLocationServiceIT {
     Thread.sleep(2500);
     JsonNode after =
         rest.getForObject(
-            "/drivers/nearby?city=2&lat=" + LAT + "&lng=" + LNG + "&radius=2000&limit=10", JsonNode.class);
+            "/drivers/nearby?city=2&lat=" + LAT + "&lng=" + LNG + "&radius=2000&limit=10",
+            JsonNode.class);
     assertThat(after).as("geo entries linger until claimed, heartbeat hashes expire").hasSize(2);
   }
 

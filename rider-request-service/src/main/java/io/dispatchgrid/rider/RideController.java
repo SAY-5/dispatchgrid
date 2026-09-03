@@ -40,7 +40,10 @@ public class RideController {
   }
 
   RideController(
-      TripRepository trips, CityShardRouter router, KafkaTemplate<String, Object> kafka, Clock clock) {
+      TripRepository trips,
+      CityShardRouter router,
+      KafkaTemplate<String, Object> kafka,
+      Clock clock) {
     this.trips = trips;
     this.router = router;
     this.kafka = kafka;
@@ -55,7 +58,8 @@ public class RideController {
       @NotNull @DecimalMin("-90") @DecimalMax("90") Double dropoffLat,
       @NotNull @DecimalMin("-180") @DecimalMax("180") Double dropoffLng) {}
 
-  public record RideCreated(String rideId, int cityId, int shard, String status, Instant requestedAt) {}
+  public record RideCreated(
+      String rideId, int cityId, int shard, String status, Instant requestedAt) {}
 
   @PostMapping
   public ResponseEntity<RideCreated> create(@Valid @RequestBody CreateRide body) {

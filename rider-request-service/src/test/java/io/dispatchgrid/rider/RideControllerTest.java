@@ -36,10 +36,13 @@ class RideControllerTest {
   static final Instant NOW = Instant.parse("2026-03-01T12:00:00Z");
 
   TripRepository trips = mock(TripRepository.class);
+
   @SuppressWarnings("unchecked")
   KafkaTemplate<String, Object> kafka = mock(KafkaTemplate.class);
+
   CityShardRouter router =
-      new CityShardRouter(List.<DataSource>of(new SimpleDriverDataSource(), new SimpleDriverDataSource()));
+      new CityShardRouter(
+          List.<DataSource>of(new SimpleDriverDataSource(), new SimpleDriverDataSource()));
   MockMvc mvc;
 
   @BeforeEach

@@ -37,14 +37,16 @@ final class InMemoryDriverIndex implements DriverIndex {
   }
 
   @Override
-  public List<NearbyDriver> nearby(int cityId, double lat, double lng, int radiusMeters, int limit) {
+  public List<NearbyDriver> nearby(
+      int cityId, double lat, double lng, int radiusMeters, int limit) {
     nearbyCalls++;
     return drivers.entrySet().stream()
         .filter(e -> e.getValue().cityId() == cityId && !claims.containsKey(e.getKey()))
         .map(
             e ->
                 new NearbyDriver(
-                    e.getKey(), Geo.haversineMeters(lat, lng, e.getValue().lat(), e.getValue().lng())))
+                    e.getKey(),
+                    Geo.haversineMeters(lat, lng, e.getValue().lat(), e.getValue().lng())))
         .filter(n -> n.distanceMeters() <= radiusMeters)
         .sorted(Comparator.comparingDouble(NearbyDriver::distanceMeters))
         .limit(limit)

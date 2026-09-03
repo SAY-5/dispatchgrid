@@ -14,10 +14,10 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.domain.geo.GeoReference;
 
 /**
- * Redis-backed index: one GEO set of available drivers per city, one heartbeat hash per driver
- * with a TTL so silent drivers age out, and a claim key per driver set with NX so a driver is
- * never handed to two rides. Each operation is a single Lua script, so claim, stale detection,
- * and set membership never race.
+ * Redis-backed index: one GEO set of available drivers per city, one heartbeat hash per driver with
+ * a TTL so silent drivers age out, and a claim key per driver set with NX so a driver is never
+ * handed to two rides. Each operation is a single Lua script, so claim, stale detection, and set
+ * membership never race.
  */
 public class RedisDriverIndex implements DriverIndex {
 
@@ -58,8 +58,8 @@ public class RedisDriverIndex implements DriverIndex {
       """;
 
   /**
-   * KEYS[1] claim key, KEYS[2] heartbeat hash, KEYS[3] geo set. ARGV[1] ride id, ARGV[2] driver
-   * id. Returns 1 if released; the driver is put back at its last reported position.
+   * KEYS[1] claim key, KEYS[2] heartbeat hash, KEYS[3] geo set. ARGV[1] ride id, ARGV[2] driver id.
+   * Returns 1 if released; the driver is put back at its last reported position.
    */
   private static final String RELEASE_LUA =
       """
@@ -120,7 +120,8 @@ public class RedisDriverIndex implements DriverIndex {
   }
 
   @Override
-  public List<NearbyDriver> nearby(int cityId, double lat, double lng, int radiusMeters, int limit) {
+  public List<NearbyDriver> nearby(
+      int cityId, double lat, double lng, int radiusMeters, int limit) {
     GeoResults<RedisGeoCommands.GeoLocation<String>> results =
         redis
             .opsForGeo()
@@ -137,7 +138,10 @@ public class RedisDriverIndex implements DriverIndex {
       return out;
     }
     for (GeoResult<RedisGeoCommands.GeoLocation<String>> r : results) {
-      out.add(new NearbyDriver(r.getContent().getName(), r.getDistance().in(RedisGeoCommands.DistanceUnit.METERS).getValue()));
+      out.add(
+          new NearbyDriver(
+              r.getContent().getName(),
+              r.getDistance().in(RedisGeoCommands.DistanceUnit.METERS).getValue()));
     }
     return out;
   }

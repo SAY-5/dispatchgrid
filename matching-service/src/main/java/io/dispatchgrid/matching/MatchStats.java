@@ -13,9 +13,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Cheap in-process counters behind {@code GET /matching/stats}: totals, a trailing 60 second
- * match rate, and latency percentiles over a fixed-size reservoir of recent matches. Micrometer
- * meters are updated in parallel for scraping.
+ * Cheap in-process counters behind {@code GET /matching/stats}: totals, a trailing 60 second match
+ * rate, and latency percentiles over a fixed-size reservoir of recent matches. Micrometer meters
+ * are updated in parallel for scraping.
  */
 public class MatchStats {
   static final int RESERVOIR = 8192;

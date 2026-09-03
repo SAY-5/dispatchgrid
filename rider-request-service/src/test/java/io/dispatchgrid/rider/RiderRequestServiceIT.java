@@ -63,9 +63,11 @@ class RiderRequestServiceIT {
     JdbcTemplate s1 = new JdbcTemplate(ds(shard1));
     assertThat(s1.queryForObject("SELECT status FROM trips WHERE ride_id = ?", String.class, ride1))
         .isEqualTo("REQUESTED");
-    assertThat(s0.queryForObject("SELECT COUNT(*) FROM trips WHERE ride_id = ?", Integer.class, ride1))
+    assertThat(
+            s0.queryForObject("SELECT COUNT(*) FROM trips WHERE ride_id = ?", Integer.class, ride1))
         .isZero();
-    assertThat(s0.queryForObject("SELECT city_id FROM trips WHERE ride_id = ?", Integer.class, ride2))
+    assertThat(
+            s0.queryForObject("SELECT city_id FROM trips WHERE ride_id = ?", Integer.class, ride2))
         .isEqualTo(2);
 
     List<ConsumerRecord<String, byte[]>> records = consume(Topics.RIDE_REQUESTS, 2);

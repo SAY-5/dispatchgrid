@@ -68,7 +68,9 @@ final class Rides {
     try {
       JsonNode res = http.postJsonForBody(riderUrl + "/rides", body);
       submitted.incrementAndGet();
-      byShard.computeIfAbsent("shard-" + res.get("shard").asInt(), k -> new AtomicLong()).incrementAndGet();
+      byShard
+          .computeIfAbsent("shard-" + res.get("shard").asInt(), k -> new AtomicLong())
+          .incrementAndGet();
       byCity.computeIfAbsent(res.get("cityId").asInt(), k -> new AtomicLong()).incrementAndGet();
     } catch (Exception e) {
       errors.incrementAndGet();

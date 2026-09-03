@@ -32,12 +32,16 @@ public class DriverController {
   private final DriverConfig.Props props;
   private final Clock clock;
 
-  public DriverController(DriverIndex index, KafkaTemplate<String, Object> kafka, DriverConfig.Props props) {
+  public DriverController(
+      DriverIndex index, KafkaTemplate<String, Object> kafka, DriverConfig.Props props) {
     this(index, kafka, props, Clock.systemUTC());
   }
 
   DriverController(
-      DriverIndex index, KafkaTemplate<String, Object> kafka, DriverConfig.Props props, Clock clock) {
+      DriverIndex index,
+      KafkaTemplate<String, Object> kafka,
+      DriverConfig.Props props,
+      Clock clock) {
     this.index = index;
     this.kafka = kafka;
     this.props = props;
@@ -55,7 +59,8 @@ public class DriverController {
       @PathVariable String driverId, @Valid @RequestBody PositionUpdate body) {
     DriverStatus status = body.status() == null ? DriverStatus.AVAILABLE : body.status();
     DriverPosition p =
-        new DriverPosition(driverId, body.cityId(), body.lat(), body.lng(), status, Instant.now(clock));
+        new DriverPosition(
+            driverId, body.cityId(), body.lat(), body.lng(), status, Instant.now(clock));
     index.upsert(p, props.heartbeatTtl());
     kafka.send(Topics.DRIVER_POSITIONS, Topics.cityKey(p.cityId()), p);
     return ResponseEntity.accepted()

@@ -13,8 +13,8 @@ import java.util.List;
 
 /**
  * Pure matching policy: search nearest-first inside a radius, try to claim each candidate, and
- * widen the radius when the ring is empty or every candidate was taken. Stateless, so it is safe
- * to call from every stream thread concurrently; Redis provides the atomicity.
+ * widen the radius when the ring is empty or every candidate was taken. Stateless, so it is safe to
+ * call from every stream thread concurrently; Redis provides the atomicity.
  */
 public class Matcher {
   private final DriverIndex index;
@@ -60,6 +60,7 @@ public class Matcher {
     }
     String reason = taken > 0 ? "all_candidates_taken" : "no_drivers_in_range";
     return MatchOutcome.unmatched(
-        new RideUnmatched(r.rideId(), r.cityId(), props.maxRadiusMeters(), reason, clock.instant()));
+        new RideUnmatched(
+            r.rideId(), r.cityId(), props.maxRadiusMeters(), reason, clock.instant()));
   }
 }

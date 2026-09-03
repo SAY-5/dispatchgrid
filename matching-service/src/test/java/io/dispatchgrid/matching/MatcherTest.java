@@ -87,7 +87,8 @@ class MatcherTest {
     assertThat(matcher(0).match(ride("r1", 1)).match().driverId()).isEqualTo("a");
     assertThat(matcher(0).match(ride("r2", 1)).match().driverId()).isEqualTo("b");
     assertThat(matcher(0).match(ride("r3", 1)).match().driverId()).isEqualTo("c");
-    assertThat(matcher(0).match(ride("r4", 1)).unmatched().reason()).isEqualTo("no_drivers_in_range");
+    assertThat(matcher(0).match(ride("r4", 1)).unmatched().reason())
+        .isEqualTo("no_drivers_in_range");
   }
 
   @Test
@@ -139,7 +140,9 @@ class MatcherTest {
     Matcher m = matcher(0);
     ExecutorService pool = Executors.newFixedThreadPool(8);
     List<Future<MatchOutcome>> results =
-        IntStream.range(0, drivers).mapToObj(i -> pool.submit(() -> m.match(ride("r" + i, 1)))).toList();
+        IntStream.range(0, drivers)
+            .mapToObj(i -> pool.submit(() -> m.match(ride("r" + i, 1))))
+            .toList();
     List<String> assigned = new java.util.ArrayList<>();
     for (Future<MatchOutcome> f : results) {
       MatchOutcome o = f.get();

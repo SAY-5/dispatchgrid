@@ -61,7 +61,8 @@ class MatchingTopologyIT {
   @Container static MySQLContainer<?> shard1 = new MySQLContainer<>("mysql:8.0");
 
   @Container
-  static GenericContainer<?> redis = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+  static GenericContainer<?> redis =
+      new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
 
   @Container
   static RedpandaContainer kafka = new RedpandaContainer("redpandadata/redpanda:v24.3.18");
@@ -69,7 +70,9 @@ class MatchingTopologyIT {
   @DynamicPropertySource
   static void props(DynamicPropertyRegistry r) {
     r.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
-    r.add("spring.kafka.streams.properties.state.dir", () -> System.getProperty("java.io.tmpdir") + "/ks-" + UUID.randomUUID());
+    r.add(
+        "spring.kafka.streams.properties.state.dir",
+        () -> System.getProperty("java.io.tmpdir") + "/ks-" + UUID.randomUUID());
     r.add("spring.data.redis.host", redis::getHost);
     r.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
     r.add("dispatchgrid.shards[0].url", shard0::getJdbcUrl);
@@ -101,7 +104,14 @@ class MatchingTopologyIT {
       double[] p = jitter(city, rnd, 2500);
       requests.add(
           new RideRequest(
-              UUID.randomUUID().toString(), "rider-" + i, city, p[0], p[1], p[0], p[1], Instant.now()));
+              UUID.randomUUID().toString(),
+              "rider-" + i,
+              city,
+              p[0],
+              p[1],
+              p[0],
+              p[1],
+              Instant.now()));
     }
     requests.forEach(trips::insertRequested);
 
@@ -117,33 +127,44 @@ class MatchingTopologyIT {
     List<Match> matches = consumeMatches(RIDES, Duration.ofSeconds(90));
     long elapsedMs = (System.nanoTime() - started) / 1_000_000;
     double perMinute = matches.size() * 60_000.0 / Math.max(elapsedMs, 1);
-    System.out.printf("matched %d rides in %d ms (%.0f per minute)%n", matches.size(), elapsedMs, perMinute);
+    System.out.printf(
+        "matched %d rides in %d ms (%.0f per minute)%n", matches.size(), elapsedMs, perMinute);
 
     assertThat(matches).hasSize(RIDES);
     assertThat(matches).extracting(Match::rideId).doesNotHaveDuplicates();
     assertThat(matches).extracting(Match::driverId).doesNotHaveDuplicates();
-    assertThat(matches).allSatisfy(m -> assertThat(m.driverId()).startsWith("d-" + m.cityId() + "-"));
+    assertThat(matches)
+        .allSatisfy(m -> assertThat(m.driverId()).startsWith("d-" + m.cityId() + "-"));
     assertThat(perMinute).isGreaterThanOrEqualTo(500);
 
     JdbcTemplate s0 = new JdbcTemplate(router.shard(0));
     JdbcTemplate s1 = new JdbcTemplate(router.shard(1));
-    assertThat(count(s1, "city_id = 1 AND status = 'MATCHED' AND driver_id IS NOT NULL")).isEqualTo(RIDES / 2);
-    assertThat(count(s0, "city_id = 2 AND status = 'MATCHED' AND driver_id IS NOT NULL")).isEqualTo(RIDES / 2);
+    assertThat(count(s1, "city_id = 1 AND status = 'MATCHED' AND driver_id IS NOT NULL"))
+        .isEqualTo(RIDES / 2);
+    assertThat(count(s0, "city_id = 2 AND status = 'MATCHED' AND driver_id IS NOT NULL"))
+        .isEqualTo(RIDES / 2);
     assertThat(count(s0, "city_id = 1")).isZero();
     assertThat(count(s1, "city_id = 2")).isZero();
-    assertThat(s1.queryForObject("SELECT COUNT(*) FROM drivers", Integer.class)).isEqualTo(RIDES / 2);
-    assertThat(s1.queryForObject("SELECT COUNT(*) FROM ride_events WHERE event_type = 'ride.matched'", Integer.class))
+    assertThat(s1.queryForObject("SELECT COUNT(*) FROM drivers", Integer.class))
+        .isEqualTo(RIDES / 2);
+    assertThat(
+            s1.queryForObject(
+                "SELECT COUNT(*) FROM ride_events WHERE event_type = 'ride.matched'",
+                Integer.class))
         .isEqualTo(RIDES / 2);
 
     JsonNode stats = rest.getForObject("/matching/stats", JsonNode.class);
     assertThat(stats.get("matched").asLong()).isEqualTo(RIDES);
     assertThat(stats.get("unmatched").asLong()).isZero();
-    assertThat(stats.get("p95LatencyMs").asLong()).isGreaterThanOrEqualTo(stats.get("p50LatencyMs").asLong());
+    assertThat(stats.get("p95LatencyMs").asLong())
+        .isGreaterThanOrEqualTo(stats.get("p50LatencyMs").asLong());
 
     // at-least-once redelivery: the same request again must not produce a second match
     try (KafkaProducer<String, byte[]> producer = producer()) {
       RideRequest again = requests.get(0);
-      producer.send(new ProducerRecord<>(Topics.RIDE_REQUESTS, Topics.cityKey(again.cityId()), Json.write(again)));
+      producer.send(
+          new ProducerRecord<>(
+              Topics.RIDE_REQUESTS, Topics.cityKey(again.cityId()), Json.write(again)));
       producer.flush();
     }
     long deadline = System.currentTimeMillis() + 20_000;
@@ -207,7 +228,9 @@ class MatchingTopologyIT {
       consumer.subscribe(List.of(Topics.RIDE_MATCHES));
       long deadline = System.currentTimeMillis() + timeout.toMillis();
       while (out.size() < expected && System.currentTimeMillis() < deadline) {
-        consumer.poll(Duration.ofMillis(300)).forEach(rec -> out.add(Json.read(rec.value(), Match.class)));
+        consumer
+            .poll(Duration.ofMillis(300))
+            .forEach(rec -> out.add(Json.read(rec.value(), Match.class)));
       }
     }
     return out;

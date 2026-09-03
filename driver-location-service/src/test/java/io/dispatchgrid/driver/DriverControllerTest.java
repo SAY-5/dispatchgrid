@@ -34,8 +34,10 @@ class DriverControllerTest {
   static final Instant NOW = Instant.parse("2026-03-01T12:00:00Z");
 
   DriverIndex index = mock(DriverIndex.class);
+
   @SuppressWarnings("unchecked")
   KafkaTemplate<String, Object> kafka = mock(KafkaTemplate.class);
+
   DriverConfig.Props props = new DriverConfig.Props(Duration.ofSeconds(15), 5);
   MockMvc mvc;
 

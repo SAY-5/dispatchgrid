@@ -10,7 +10,8 @@ class LoadGenTest {
 
   @Test
   void parsesFlagsInBothForms() {
-    Options o = Options.parse(new String[] {"--duration=30", "--rides-per-second", "5", "--cities=2"});
+    Options o =
+        Options.parse(new String[] {"--duration=30", "--rides-per-second", "5", "--cities=2"});
     assertThat(o.durationSeconds()).isEqualTo(30);
     assertThat(o.ridesPerSecond()).isEqualTo(5);
     assertThat(o.cities()).isEqualTo(2);
