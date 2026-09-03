@@ -99,8 +99,12 @@ class RedisDriverIndexIT {
     assertThat(index.claim(1, "d1", "ride-a", Duration.ofSeconds(10))).isEqualTo(ClaimResult.CLAIMED);
     assertThat(index.claim(1, "d1", "ride-b", Duration.ofSeconds(10))).isEqualTo(ClaimResult.TAKEN);
     assertThat(index.claimedBy(1, "d1")).isEqualTo("ride-a");
+    assertThat(index.nearby(1, LAT, LNG, 1000, 10)).isEmpty();
+    index.upsert(at("d1", 1, 20, 0), Duration.ofMinutes(1));
+    assertThat(index.nearby(1, LAT, LNG, 1000, 10)).as("pings do not resurface a claimed driver").isEmpty();
     assertThat(index.release(1, "d1", "ride-b")).isFalse();
     assertThat(index.release(1, "d1", "ride-a")).isTrue();
+    assertThat(index.nearby(1, LAT, LNG, 1000, 10)).extracting(NearbyDriver::driverId).containsExactly("d1");
     assertThat(index.claim(1, "d1", "ride-b", Duration.ofSeconds(10))).isEqualTo(ClaimResult.CLAIMED);
   }
 

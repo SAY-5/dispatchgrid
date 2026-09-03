@@ -5,26 +5,43 @@ import io.dispatchgrid.common.model.DriverStatus;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import org.springframework.data.geo.Distance;
 import org.springframework.data.geo.GeoResult;
 import org.springframework.data.geo.GeoResults;
-import org.springframework.data.geo.Point;
 import org.springframework.data.redis.connection.RedisGeoCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.domain.geo.GeoReference;
 
 /**
- * Redis-backed index: one GEO set per city, one heartbeat hash per driver with a TTL so silent
- * drivers age out, and a claim key per driver set with NX so a driver is never handed to two
- * rides. Claim and stale detection run inside a single Lua script so they are atomic.
+ * Redis-backed index: one GEO set of available drivers per city, one heartbeat hash per driver
+ * with a TTL so silent drivers age out, and a claim key per driver set with NX so a driver is
+ * never handed to two rides. Each operation is a single Lua script, so claim, stale detection,
+ * and set membership never race.
  */
 public class RedisDriverIndex implements DriverIndex {
 
   /**
+   * KEYS[1] geo set, KEYS[2] heartbeat hash, KEYS[3] claim key. ARGV[1] driver id, ARGV[2] lng,
+   * ARGV[3] lat, ARGV[4] status, ARGV[5] reported at, ARGV[6] heartbeat ttl ms. A driver that is
+   * currently claimed keeps its heartbeat but stays out of the searchable set.
+   */
+  private static final String UPSERT_LUA =
+      """
+      redis.call('HSET', KEYS[2], 'status', ARGV[4], 'lat', ARGV[3], 'lng', ARGV[2], 'reported_at', ARGV[5])
+      redis.call('PEXPIRE', KEYS[2], ARGV[6])
+      if redis.call('EXISTS', KEYS[3]) == 1 then
+        redis.call('ZREM', KEYS[1], ARGV[1])
+        return 0
+      end
+      redis.call('GEOADD', KEYS[1], ARGV[2], ARGV[3], ARGV[1])
+      return 1
+      """;
+
+  /**
    * KEYS[1] claim key, KEYS[2] heartbeat hash, KEYS[3] geo set. ARGV[1] ride id, ARGV[2] ttl ms,
-   * ARGV[3] driver id. Returns 1 claimed, 0 taken, -1 stale.
+   * ARGV[3] driver id. Returns 1 claimed, 0 taken, -1 stale. A successful claim removes the driver
+   * from the searchable set until the claim expires or is released.
    */
   private static final String CLAIM_LUA =
       """
@@ -34,26 +51,38 @@ public class RedisDriverIndex implements DriverIndex {
         return -1
       end
       if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then
+        redis.call('ZREM', KEYS[3], ARGV[3])
         return 1
       end
       return 0
       """;
 
-  /** KEYS[1] claim key. ARGV[1] ride id. Returns 1 if released. */
+  /**
+   * KEYS[1] claim key, KEYS[2] heartbeat hash, KEYS[3] geo set. ARGV[1] ride id, ARGV[2] driver
+   * id. Returns 1 if released; the driver is put back at its last reported position.
+   */
   private static final String RELEASE_LUA =
       """
       if redis.call('GET', KEYS[1]) == ARGV[1] then
-        return redis.call('DEL', KEYS[1])
+        redis.call('DEL', KEYS[1])
+        local lat = redis.call('HGET', KEYS[2], 'lat')
+        local lng = redis.call('HGET', KEYS[2], 'lng')
+        if lat and lng then
+          redis.call('GEOADD', KEYS[3], lng, lat, ARGV[2])
+        end
+        return 1
       end
       return 0
       """;
 
   private final StringRedisTemplate redis;
+  private final DefaultRedisScript<Long> upsertScript;
   private final DefaultRedisScript<Long> claimScript;
   private final DefaultRedisScript<Long> releaseScript;
 
   public RedisDriverIndex(StringRedisTemplate redis) {
     this.redis = redis;
+    this.upsertScript = new DefaultRedisScript<>(UPSERT_LUA, Long.class);
     this.claimScript = new DefaultRedisScript<>(CLAIM_LUA, Long.class);
     this.releaseScript = new DefaultRedisScript<>(RELEASE_LUA, Long.class);
   }
@@ -79,24 +108,15 @@ public class RedisDriverIndex implements DriverIndex {
       redis.delete(hash);
       return;
     }
-    redis.executePipelined(
-        (org.springframework.data.redis.core.RedisCallback<Object>)
-            conn -> {
-              var ser = redis.getStringSerializer();
-              conn.geoCommands()
-                  .geoAdd(
-                      ser.serialize(geo), new Point(p.lng(), p.lat()), ser.serialize(p.driverId()));
-              conn.hashCommands()
-                  .hMSet(
-                      ser.serialize(hash),
-                      Map.of(
-                          ser.serialize("status"), ser.serialize(p.status().name()),
-                          ser.serialize("lat"), ser.serialize(Double.toString(p.lat())),
-                          ser.serialize("lng"), ser.serialize(Double.toString(p.lng())),
-                          ser.serialize("reported_at"), ser.serialize(p.reportedAt().toString())));
-              conn.keyCommands().pExpire(ser.serialize(hash), heartbeatTtl.toMillis());
-              return null;
-            });
+    redis.execute(
+        upsertScript,
+        List.of(geo, hash, claimKey(p.cityId(), p.driverId())),
+        p.driverId(),
+        Double.toString(p.lng()),
+        Double.toString(p.lat()),
+        p.status().name(),
+        p.reportedAt().toString(),
+        Long.toString(heartbeatTtl.toMillis()));
   }
 
   @Override
@@ -143,7 +163,12 @@ public class RedisDriverIndex implements DriverIndex {
 
   @Override
   public boolean release(int cityId, String driverId, String rideId) {
-    Long r = redis.execute(releaseScript, List.of(claimKey(cityId, driverId)), rideId);
+    Long r =
+        redis.execute(
+            releaseScript,
+            List.of(claimKey(cityId, driverId), driverKey(cityId, driverId), geoKey(cityId)),
+            rideId,
+            driverId);
     return r != null && r == 1;
   }
 

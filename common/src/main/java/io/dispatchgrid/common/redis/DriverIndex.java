@@ -22,6 +22,6 @@ public interface DriverIndex {
   /** The ride currently holding the driver, or null. */
   String claimedBy(int cityId, String driverId);
 
-  /** Number of drivers in the city index. */
+  /** Number of available (unclaimed, heartbeating) drivers in the city index. */
   long size(int cityId);
 }
