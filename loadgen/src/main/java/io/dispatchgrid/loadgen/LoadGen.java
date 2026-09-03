@@ -68,6 +68,7 @@ public final class LoadGen {
     summary.put("drivers", fleet.size());
     summary.put("pingsOk", fleet.pingsOk.get());
     summary.put("pingErrors", fleet.pingErrors.get());
+    summary.put("pingRetries", fleet.pingRetries.get());
     summary.put("ridesSubmitted", rides.submitted.get());
     summary.put("rideErrors", rides.errors.get());
     summary.put("matched", matched);
@@ -174,8 +175,12 @@ public final class LoadGen {
         "run                 %d s at %d rides/s, cities %s%n",
         opt.durationSeconds(), opt.ridesPerSecond(), cityNames);
     System.out.printf(
-        "drivers             %d (%d per city), pings ok=%d errors=%d%n",
-        s.get("drivers"), opt.driversPerCity(), s.get("pingsOk"), s.get("pingErrors"));
+        "drivers             %d (%d per city), pings ok=%d errors=%d retries=%d%n",
+        s.get("drivers"),
+        opt.driversPerCity(),
+        s.get("pingsOk"),
+        s.get("pingErrors"),
+        s.get("pingRetries"));
     System.out.printf(
         "rides submitted     %d, http errors=%d, by shard %s%n",
         s.get("ridesSubmitted"), s.get("rideErrors"), s.get("submittedByShard"));

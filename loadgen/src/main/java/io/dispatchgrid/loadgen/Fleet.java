@@ -1,5 +1,6 @@
 package io.dispatchgrid.loadgen;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +19,7 @@ final class Fleet {
 
   final AtomicLong pingsOk = new AtomicLong();
   final AtomicLong pingErrors = new AtomicLong();
+  final AtomicLong pingRetries = new AtomicLong();
 
   private final Http http;
   private final String driverUrl;
@@ -106,14 +108,28 @@ final class Fleet {
 
   private void ping(Driver d) {
     d.step();
+    String url = driverUrl + "/drivers/" + d.id + "/position";
+    Object body = d.body();
     try {
-      int code = http.postJson(driverUrl + "/drivers/" + d.id + "/position", d.body());
-      if (code / 100 == 2) {
-        pingsOk.incrementAndGet();
-      } else {
+      record(http.postJson(url, body));
+    } catch (IOException first) {
+      // The position write is an idempotent upsert, so one retry on a transport failure
+      // (for example a keep-alive connection closed by a draining pod) is safe and counted.
+      pingRetries.incrementAndGet();
+      try {
+        record(http.postJson(url, body));
+      } catch (Exception second) {
         pingErrors.incrementAndGet();
       }
     } catch (Exception e) {
+      pingErrors.incrementAndGet();
+    }
+  }
+
+  private void record(int code) {
+    if (code / 100 == 2) {
+      pingsOk.incrementAndGet();
+    } else {
       pingErrors.incrementAndGet();
     }
   }
