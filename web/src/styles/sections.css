@@ -289,3 +289,131 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* geo match */
+.geo-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.8fr);
+  gap: 18px;
+  margin-top: 40px;
+  align-items: start;
+}
+.geo-map-wrap {
+  padding: 14px;
+}
+.geo-map {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 16px;
+  cursor: crosshair;
+}
+.geo-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.geo-side {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.geo-controls,
+.geo-trace {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.label-cap {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(7, 11, 20, 0.5);
+}
+.segmented button {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 8px 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.segmented button.on {
+  background: linear-gradient(180deg, rgba(76, 141, 255, 0.45), rgba(76, 141, 255, 0.2));
+  color: var(--ice);
+}
+.geo-trace ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+  font-size: 13.5px;
+}
+.geo-trace li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border-left: 2px solid var(--line-strong);
+  background: rgba(7, 11, 20, 0.45);
+  color: var(--text-dim);
+  animation: pop 0.35s var(--ease);
+}
+.geo-trace li .mono {
+  color: var(--ice);
+  font-size: 12px;
+}
+.geo-trace li.t-claim.taken {
+  border-left-color: var(--taken);
+}
+.geo-trace li.t-claim.claimed {
+  border-left-color: var(--ok);
+}
+.geo-trace li.t-grow {
+  border-left-color: var(--warn);
+  color: var(--warn);
+}
+.geo-trace li.t-widen {
+  border-left-color: var(--sapphire);
+  color: var(--ice);
+}
+.geo-trace li.t-done.ok {
+  border-left-color: var(--ok);
+  color: var(--ok);
+  font-weight: 600;
+}
+.geo-trace li.t-done.bad {
+  border-left-color: var(--taken);
+  color: var(--taken);
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (max-width: 900px) {
+  .geo-grid {
+    grid-template-columns: 1fr;
+  }
+}
