@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build, lint, unit and integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: lint
+        run: mvn -B spotless:check
+      - name: verify (unit tests via surefire, testcontainers integration tests via failsafe)
+        run: mvn -B verify
+      - name: test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            **/target/surefire-reports/*.txt
+            **/target/failsafe-reports/*.txt
+          if-no-files-found: ignore
+
+  k8s-e2e:
+    name: kind rolling update under load
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+      - name: cluster, deploy, load, rolling update
+        run: ./scripts/k8s-e2e.sh
+        env:
+          KEEP_CLUSTER: "1"
+      - name: load summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadgen-summary
+          path: loadgen-summary.json
+          if-no-files-found: ignore
