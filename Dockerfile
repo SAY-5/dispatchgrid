@@ -18,7 +18,6 @@ FROM eclipse-temurin:21-jre
 ARG MODULE
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=70 -Djava.security.egd=file:/dev/./urandom"
 WORKDIR /app
-COPY --from=build /src/${MODULE}/target/${MODULE}.jar /app/app.jar
-RUN useradd --system --uid 10001 app && chown -R app /app
-USER app
+COPY --from=build --chown=10001:10001 /src/${MODULE}/target/${MODULE}.jar /app/app.jar
+USER 10001:10001
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
