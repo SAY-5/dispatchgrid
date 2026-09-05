@@ -97,6 +97,8 @@ come from `GET /matching/stats` on the matching service, and the shard distribut
 | --- | --- | --- |
 | GET | `/matching/stats` | `matched`, `unmatched`, `dropped`, `matchesPerMinute` (trailing 60 s), `matchesPerMinuteOverall`, `p50/p95/p99LatencyMs`. |
 | GET | `/matching/config` | Effective radius and claim settings. |
+| GET | `/pricing/{city}` | Surge grid for the city: `maxMultiplier`, `surgingCells`, and every cell with `demand`, `supply`, `ratio`, `multiplier`, hottest first. |
+| GET | `/pricing/{city}/quote?lat&lng` | Multiplier for the cell containing a pickup point. |
 
 All services expose `/actuator/health/liveness`, `/actuator/health/readiness`, `/actuator/metrics`,
 and `/actuator/prometheus`. Readiness includes the dependencies each service uses: Kafka and the
@@ -108,7 +110,7 @@ and the Streams state for the matching service.
 | Topic | Key | Value | Producer | Consumer |
 | --- | --- | --- | --- | --- |
 | `ride-requests` | city id | `RideRequest` | rider-request-service | matching-service (Streams) |
-| `driver-positions` | city id | `DriverPosition` | driver-location-service | downstream analytics |
+| `driver-positions` | city id | `DriverPosition` | driver-location-service | matching-service (surge supply) |
 | `ride-matches` | city id | `Match` | matching-service | trip lifecycle consumers |
 | `ride-unmatched` | city id | `RideUnmatched` | matching-service | retry and pricing consumers |
 
@@ -165,16 +167,18 @@ shard holds more than one city. The same script is the `k8s-e2e` job in `.github
 
 ## Tests
 
-32 unit tests (Surefire) and 13 integration tests (Failsafe, Testcontainers) across the five modules.
+43 unit tests (Surefire) and 13 integration tests (Failsafe, Testcontainers) across the five modules.
 
-* Unit: shard routing determinism and overrides, haversine, radius expansion, matcher policy
-  (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides), stats
-  window and percentiles, controllers, load generator parsing.
+* Unit: shard routing determinism and overrides, haversine, grid cells, radius expansion, matcher
+  policy (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides,
+  surge stamped from the pickup cell), surge tracker (window decay, supply TTL, clamping, minimum
+  demand), pricing endpoints, stats window and percentiles, controllers, load generator parsing.
 * Integration (Testcontainers): two MySQL shards with Flyway (trip lands in the shard for its
   city), Redis GEO ordering, heartbeat expiry, exclusive Lua claims under 64 concurrent claimers,
   the rider and driver services end to end against Redpanda, and the full Streams topology:
   300 requests in, 300 matches out with no driver assigned twice, rows updated in the right
-  shard, redelivery dropped, and throughput asserted at 500 or more matches per minute.
+  shard with a surge multiplier, the pricing grid populated, redelivery dropped, and throughput
+  asserted at 500 or more matches per minute.
 
 ## Layout
 
@@ -183,7 +187,7 @@ common/                   domain records, JSON serde, CityShardRouter, TripRepos
                           RedisDriverIndex (GEO + Lua claims), readiness indicators, migrations
 rider-request-service/    POST /rides, GET /rides/{id}, GET /rides/stats
 driver-location-service/  POST /drivers/{id}/position, GET /drivers/nearby
-matching-service/         Kafka Streams topology, Matcher, MatchStats, GET /matching/stats
+matching-service/         Kafka Streams topology, Matcher, SurgeTracker, GET /matching/stats, GET /pricing
 loadgen/                  synthetic fleet and rider traffic with a measured summary
 deploy/docker-compose.yml local stack
 deploy/k8s/               manifests + kustomization + loadgen job

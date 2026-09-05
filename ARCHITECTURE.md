@@ -93,7 +93,30 @@ declared replica count. Three details make this actually zero-error under load:
 
 `scripts/k8s-e2e.sh` proves this by changing an environment variable on all three Deployments
 while the in-cluster load generator is submitting rides and pings, then failing the build if the
-generator saw a single HTTP error or an undecided ride. The matching service runs one replica in
-the demo (its Streams state directory is ephemeral); a surge pod joins the consumer group, the
-group rebalances, and the old pod leaves, which shows up as a brief latency bump and no lost
-requests.
+generator saw a single HTTP error or an undecided ride. The matching service runs two replicas
+with `num.standby.replicas: 1` and static membership (`group.instance.id` set to the pod name,
+20 s session timeout): a restarted pod rejoins under its old id inside the session window, so
+the group does not rebalance at all, and if it does the standby already holds the state. A
+rolling update shows up as a brief latency bump and no lost requests.
+
+## Surge pricing from per-cell supply and demand
+
+Surge is a read-side signal computed inside the matching service from the two streams it already
+sees. The city is cut into fixed-size grid cells (`GeoCell`, 1 km by default). Every ride request
+adds a timestamp to its pickup cell's demand deque for a trailing 60 s window; every available
+driver position places the driver in a cell until its next ping or a 15 s supply TTL. Both sides
+decay on their own, so a cell falls back to 1.0 once the burst ages out or drivers move in.
+
+The multiplier is `1 + slope * (demand / supply - 1)` clamped to `[1, max]`, and only applies
+once a cell has at least `minDemand` requests so one ride in an empty cell does not surge. The
+matcher stamps the pickup cell's multiplier on the `Match` at claim time, and the trip row keeps
+it in `surge_multiplier`, so a later price dispute can be traced to the demand the rider actually
+saw. `GET /pricing/{city}` exposes the grid; `dispatchgrid.surge.max` and
+`dispatchgrid.surge.cells` are gauges per city.
+
+Keeping the tracker in process is a deliberate tradeoff: each stream task only ever sees its own
+partitions, so with more than one matching pod every pod computes surge from a subset of the
+city's traffic. That is acceptable because records are keyed by city, which means a city's
+requests and driver positions land on the same partition number in both topics and are read by
+the same task; the signal is complete per city as long as both topics have the same partition
+count.
