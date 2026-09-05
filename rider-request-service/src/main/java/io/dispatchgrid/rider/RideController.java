@@ -1,9 +1,12 @@
 package io.dispatchgrid.rider;
 
+import io.dispatchgrid.common.geo.Eta;
 import io.dispatchgrid.common.kafka.Topics;
 import io.dispatchgrid.common.model.RideRequest;
 import io.dispatchgrid.common.model.TripEvent;
 import io.dispatchgrid.common.model.TripEventType;
+import io.dispatchgrid.common.model.TripStatus;
+import io.dispatchgrid.common.serde.Json;
 import io.dispatchgrid.common.shard.CityShardRouter;
 import io.dispatchgrid.common.shard.TripRepository;
 import jakarta.validation.Valid;
@@ -15,10 +18,12 @@ import jakarta.validation.constraints.NotNull;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -36,22 +41,28 @@ public class RideController {
   private final TripRepository trips;
   private final CityShardRouter router;
   private final KafkaTemplate<String, Object> kafka;
+  private final double pickupSpeedMps;
   private final Clock clock;
 
   @Autowired
   public RideController(
-      TripRepository trips, CityShardRouter router, KafkaTemplate<String, Object> kafka) {
-    this(trips, router, kafka, Clock.systemUTC());
+      TripRepository trips,
+      CityShardRouter router,
+      KafkaTemplate<String, Object> kafka,
+      @Value("${rider.pickup-speed-mps:8.0}") double pickupSpeedMps) {
+    this(trips, router, kafka, pickupSpeedMps, Clock.systemUTC());
   }
 
   RideController(
       TripRepository trips,
       CityShardRouter router,
       KafkaTemplate<String, Object> kafka,
+      double pickupSpeedMps,
       Clock clock) {
     this.trips = trips;
     this.router = router;
     this.kafka = kafka;
+    this.pickupSpeedMps = pickupSpeedMps;
     this.clock = clock;
   }
 
@@ -90,12 +101,48 @@ public class RideController {
                 request.requestedAt()));
   }
 
+  /** The trip row plus a pickup ETA once a driver is on the way. */
   @GetMapping("/{rideId}")
-  public ResponseEntity<TripRepository.Trip> get(
+  public ResponseEntity<Map<String, Object>> get(
       @PathVariable String rideId, @RequestParam(required = false) Integer city) {
-    Optional<TripRepository.Trip> trip =
-        city != null ? trips.find(city, rideId) : trips.findAnywhere(rideId);
-    return trip.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    return lookup(rideId, city)
+        .map(this::view)
+        .map(ResponseEntity::ok)
+        .orElseGet(() -> ResponseEntity.notFound().build());
+  }
+
+  /** Every ride_events row for the trip, oldest first, from the shard that owns it. */
+  @GetMapping("/{rideId}/timeline")
+  public ResponseEntity<Map<String, Object>> timeline(
+      @PathVariable String rideId, @RequestParam(required = false) Integer city) {
+    Optional<TripRepository.Trip> trip = lookup(rideId, city);
+    if (trip.isEmpty()) {
+      return ResponseEntity.notFound().build();
+    }
+    TripRepository.Trip t = trip.get();
+    List<TripRepository.Event> events = trips.events(t.cityId(), rideId);
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("rideId", rideId);
+    body.put("cityId", t.cityId());
+    body.put("shard", t.shard());
+    body.put("status", t.status().name());
+    body.put("events", events);
+    return ResponseEntity.ok(body);
+  }
+
+  private Optional<TripRepository.Trip> lookup(String rideId, Integer city) {
+    return city != null ? trips.find(city, rideId) : trips.findAnywhere(rideId);
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> view(TripRepository.Trip t) {
+    Map<String, Object> out = new LinkedHashMap<>(Json.MAPPER.convertValue(t, Map.class));
+    Long eta = null;
+    if (t.status() == TripStatus.MATCHED && t.driverDistanceMeters() != null) {
+      eta = Eta.pickupSeconds(t.driverDistanceMeters(), pickupSpeedMps);
+    }
+    out.put("pickupEtaSeconds", eta);
+    return out;
   }
 
   /**

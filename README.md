@@ -80,7 +80,8 @@ come from `GET /matching/stats` on the matching service, and the shard distribut
 | Method | Path | Description |
 | --- | --- | --- |
 | POST | `/rides` | Body `{riderId, cityId, pickupLat, pickupLng, dropoffLat, dropoffLng}`. Writes the trip (status `REQUESTED`) to the city's shard and produces `ride.requested`. Returns 202 with `{rideId, cityId, shard, status, requestedAt}`. |
-| GET | `/rides/{rideId}?city=` | Reads the trip from the city's shard; without `city` it scans shards. 404 if unknown. |
+| GET | `/rides/{rideId}?city=` | The trip row plus `pickupEtaSeconds` while a driver is on the way (straight-line `driverDistanceMeters` over `rider.pickup-speed-mps`, 8 m/s by default). Without `city` it scans shards. 404 if unknown. |
+| GET | `/rides/{rideId}/timeline?city=` | Every `ride_events` row for the trip, oldest first: `ride.requested`, `ride.retry`, `ride.matched`, `ride.unmatched`, `ride.cancelled`, `ride.completed`, each with its payload. |
 | POST | `/rides/{rideId}/cancel?city=` | Cancels a `REQUESTED` or `MATCHED` trip and produces `ride.cancelled` so the matcher frees the driver. 409 with the current status once the trip is final. |
 | GET | `/rides/stats` | Trip counts per shard grouped by `city:status`. |
 
@@ -173,16 +174,16 @@ shard holds more than one city. The same script is the `k8s-e2e` job in `.github
 
 ## Tests
 
-51 unit tests (Surefire) and 14 integration tests (Failsafe, Testcontainers) across the five modules.
+55 unit tests (Surefire) and 14 integration tests (Failsafe, Testcontainers) across the five modules.
 
-* Unit: shard routing determinism and overrides, haversine, grid cells, radius expansion, matcher
+* Unit: shard routing determinism and overrides, haversine, grid cells, pickup ETA, radius expansion, matcher
   policy (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides,
   surge stamped from the pickup cell), surge tracker (window decay, supply TTL, clamping, minimum
   demand), pricing endpoints, lifecycle (completion frees the claim only after the row moved,
   cancellation frees only that ride's driver), the retry path through the real topology under
   `TopologyTestDriver` with a mocked wall clock (a ride waits for a driver that arrives later, a
-  ride gives up after the third attempt), stats window and percentiles, controllers, load
-  generator parsing.
+  ride gives up after the third attempt), stats window and percentiles, controllers (including
+  the ETA only while MATCHED and the timeline order), load generator parsing.
 * Integration (Testcontainers): two MySQL shards with Flyway (trip lands in the shard for its
   city), Redis GEO ordering, heartbeat expiry, exclusive Lua claims under 64 concurrent claimers,
   the rider and driver services end to end against Redpanda, and the full Streams topology:
@@ -191,14 +192,15 @@ shard holds more than one city. The same script is the `k8s-e2e` job in `.github
   a cancellation returning their drivers to the index while an impostor's completion is ignored,
   a ride in an empty city matched on retry once a driver appears and another reported unmatched
   after three attempts, and throughput asserted at 500 or more matches per minute. The shard test also drives the trip
-  state machine (complete only from MATCHED by the matched driver, cancel only while not final).
+  state machine (complete only from MATCHED by the matched driver, cancel only while not final)
+  and reads the timeline back with its payloads.
 
 ## Layout
 
 ```
 common/                   domain records, JSON serde, CityShardRouter, TripRepository,
                           RedisDriverIndex (GEO + Lua claims), readiness indicators, migrations
-rider-request-service/    POST /rides, POST /rides/{id}/cancel, GET /rides/{id}, GET /rides/stats
+rider-request-service/    POST /rides, POST /rides/{id}/cancel, GET /rides/{id}, GET /rides/{id}/timeline, GET /rides/stats
 driver-location-service/  POST /drivers/{id}/position, POST /drivers/{id}/trips/{ride}/complete, GET /drivers/nearby
 matching-service/         Kafka Streams topology, Matcher, SurgeTracker, GET /matching/stats, GET /pricing
 loadgen/                  synthetic fleet and rider traffic with a measured summary

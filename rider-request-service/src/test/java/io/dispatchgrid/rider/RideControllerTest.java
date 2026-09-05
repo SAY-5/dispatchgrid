@@ -50,7 +50,7 @@ class RideControllerTest {
   @BeforeEach
   void setUp() {
     RideController controller =
-        new RideController(trips, router, kafka, Clock.fixed(NOW, ZoneOffset.UTC));
+        new RideController(trips, router, kafka, 8.0, Clock.fixed(NOW, ZoneOffset.UTC));
     mvc = MockMvcBuilders.standaloneSetup(controller).build();
   }
 
@@ -90,7 +90,7 @@ class RideControllerTest {
 
   private static TripRepository.Trip trip(TripStatus status, String driverId) {
     return new TripRepository.Trip(
-        "abc", "r1", 2, status, 1, 2, 3, 4, driverId, 40, 1000, 1.0, NOW, NOW, null, null, 0);
+        "abc", "r1", 2, status, 1, 2, 3, 4, driverId, 40, 1000, 800, 1.0, NOW, NOW, null, null, 0);
   }
 
   @Test
@@ -99,8 +99,35 @@ class RideControllerTest {
     mvc.perform(get("/rides/abc").param("city", "2"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.driverId").value("d9"))
-        .andExpect(jsonPath("$.shard").value(0));
+        .andExpect(jsonPath("$.shard").value(0))
+        .andExpect(jsonPath("$.pickupEtaSeconds").value(100));
     verify(trips, never()).findAnywhere(any());
+  }
+
+  @Test
+  void etaIsOnlyGivenWhileADriverIsOnTheWay() throws Exception {
+    when(trips.find(2, "abc")).thenReturn(Optional.of(trip(TripStatus.REQUESTED, null)));
+    mvc.perform(get("/rides/abc").param("city", "2"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.pickupEtaSeconds").value(org.hamcrest.Matchers.nullValue()));
+  }
+
+  @Test
+  void timelineListsTheShardsEventsOldestFirst() throws Exception {
+    when(trips.findAnywhere("abc")).thenReturn(Optional.of(trip(TripStatus.MATCHED, "d9")));
+    when(trips.events(2, "abc"))
+        .thenReturn(
+            List.of(
+                new TripRepository.Event(1, "ride.requested", null, NOW),
+                new TripRepository.Event(2, "ride.retry", null, NOW.plusSeconds(5)),
+                new TripRepository.Event(3, "ride.matched", null, NOW.plusSeconds(9))));
+    mvc.perform(get("/rides/abc/timeline"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("MATCHED"))
+        .andExpect(jsonPath("$.events.length()").value(3))
+        .andExpect(jsonPath("$.events[1].type").value("ride.retry"))
+        .andExpect(jsonPath("$.events[2].type").value("ride.matched"));
   }
 
   @Test

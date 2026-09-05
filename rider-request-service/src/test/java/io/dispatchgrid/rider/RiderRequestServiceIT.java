@@ -90,6 +90,10 @@ class RiderRequestServiceIT {
     assertThat(get.getBody().get("shard").asInt()).isEqualTo(1);
     assertThat(rest.getForEntity("/rides/" + UUID.randomUUID(), JsonNode.class).getStatusCode())
         .isEqualTo(HttpStatus.NOT_FOUND);
+    JsonNode timeline = rest.getForObject("/rides/" + ride1 + "/timeline", JsonNode.class);
+    assertThat(timeline.get("events").size()).isEqualTo(1);
+    assertThat(timeline.get("events").get(0).get("type").asText()).isEqualTo("ride.requested");
+    assertThat(timeline.get("events").get(0).get("payload").get("riderId").asText()).isNotEmpty();
 
     JsonNode stats = rest.getForObject("/rides/stats", JsonNode.class);
     assertThat(stats.get("shard-1").get("1:REQUESTED").asLong()).isEqualTo(1);

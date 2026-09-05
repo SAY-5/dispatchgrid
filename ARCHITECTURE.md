@@ -168,3 +168,20 @@ The retry path reuses the matcher unchanged and keeps the trip row `REQUESTED` b
 so a cancellation during the wait is handled by the same conditional update as before: the
 replayed pass claims a driver, `markMatched` sees the row is no longer `REQUESTED`, releases the
 claim, and drops the outcome.
+
+## The timeline is the audit log
+
+`ride_events` was in the schema from the first version, written on every transition, but nothing
+read it. Now every row the platform writes about a ride is reachable from one call,
+`GET /rides/{id}/timeline`, served from the shard that owns the city, in insertion order:
+requested, each retry with the radius and reason that failed, the match with its distance, radius,
+latency and surge, and the cancellation or completion with who triggered it. This is the
+support tool: when a rider asks why a trip took forty seconds to match, the answer is two
+`ride.retry` rows and a `ride.matched` row with `attempts: 3` and a 4 km radius, not a guess.
+
+The match now also persists `driver_distance_m`, which is what `GET /rides/{id}` turns into
+`pickupEtaSeconds` while the driver is on the way. The estimate is straight-line distance over
+an effective speed (`rider.pickup-speed-mps`, 8 m/s by default, roughly 30 km/h door to door),
+computed on read rather than at match time so the speed can be tuned per deployment without
+touching stored rows. It is deliberately a coarse number: a routing engine belongs in a
+separate service with its own cache, and the read path here stays a single-row lookup.

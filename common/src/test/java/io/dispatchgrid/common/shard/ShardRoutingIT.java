@@ -130,13 +130,13 @@ class ShardRoutingIT {
     assertThat(trips.markMatched(match(gone.rideId(), "d3", now))).isFalse();
     assertThat(trips.find(1, gone.rideId()).orElseThrow().cancelledAt()).isNotNull();
 
-    JdbcTemplate s1 = new JdbcTemplate(router.shard(1));
-    assertThat(
-            s1.queryForList(
-                "SELECT event_type FROM ride_events WHERE ride_id = ? ORDER BY id",
-                String.class,
-                gone.rideId()))
+    var timeline = trips.events(1, gone.rideId());
+    assertThat(timeline)
+        .extracting(TripRepository.Event::type)
         .containsExactly("ride.requested", "ride.matched", "ride.cancelled");
+    assertThat(timeline.get(1).payload().get("driverId").asText()).isEqualTo("d2");
+    assertThat(trips.find(1, gone.rideId()).orElseThrow().driverDistanceMeters()).isEqualTo(120);
+    assertThat(trips.events(1, "no-such-ride")).isEmpty();
   }
 
   private static Match match(String rideId, String driverId, Instant at) {

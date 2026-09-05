@@ -1,5 +1,6 @@
 package io.dispatchgrid.common.shard;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import io.dispatchgrid.common.model.Match;
 import io.dispatchgrid.common.model.RideRequest;
 import io.dispatchgrid.common.model.TripEvent;
@@ -35,12 +36,16 @@ public class TripRepository {
       String driverId,
       Integer matchLatencyMs,
       Integer searchRadiusMeters,
+      Integer driverDistanceMeters,
       Double surgeMultiplier,
       Instant requestedAt,
       Instant matchedAt,
       Instant completedAt,
       Instant cancelledAt,
       int shard) {}
+
+  /** One row of the trip's timeline, oldest first. */
+  public record Event(long id, String type, JsonNode payload, Instant createdAt) {}
 
   private JdbcTemplate jdbc(int cityId) {
     return new JdbcTemplate(router.dataSourceFor(cityId));
@@ -73,13 +78,14 @@ public class TripRepository {
         jdbc.update(
             """
             UPDATE trips SET status = ?, driver_id = ?, match_latency_ms = ?, search_radius_m = ?,
-                             surge_multiplier = ?, matched_at = ?
+                             driver_distance_m = ?, surge_multiplier = ?, matched_at = ?
             WHERE ride_id = ? AND status = ?
             """,
             TripStatus.MATCHED.name(),
             m.driverId(),
             (int) m.matchLatencyMs(),
             m.searchRadiusMeters(),
+            (int) Math.round(m.driverDistanceMeters()),
             m.surgeMultiplier(),
             Timestamp.from(m.matchedAt()),
             m.rideId(),
@@ -185,6 +191,24 @@ public class TripRepository {
     return rows.stream().findFirst();
   }
 
+  /** The trip's timeline from ride_events, oldest first; empty for an unknown ride. */
+  public List<Event> events(int cityId, String rideId) {
+    return jdbc(cityId)
+        .query(
+            "SELECT id, event_type, payload, created_at FROM ride_events WHERE ride_id = ?"
+                + " ORDER BY id",
+            (rs, i) -> {
+              String raw = rs.getString("payload");
+              JsonNode payload = raw == null ? null : Json.read(raw.getBytes(), JsonNode.class);
+              return new Event(
+                  rs.getLong("id"),
+                  rs.getString("event_type"),
+                  payload,
+                  rs.getTimestamp("created_at").toInstant());
+            },
+            rideId);
+  }
+
   /** Looks in every shard; used when the caller does not know the city. */
   public Optional<Trip> findAnywhere(String rideId) {
     for (int i = 0; i < router.shardCount(); i++) {
@@ -237,6 +261,7 @@ public class TripRepository {
       Timestamp cancelled = rs.getTimestamp("cancelled_at");
       Integer latency = rs.getObject("match_latency_ms", Integer.class);
       Integer radius = rs.getObject("search_radius_m", Integer.class);
+      Integer distance = rs.getObject("driver_distance_m", Integer.class);
       Double surge = rs.getObject("surge_multiplier", Double.class);
       return new Trip(
           rs.getString("ride_id"),
@@ -250,6 +275,7 @@ public class TripRepository {
           rs.getString("driver_id"),
           latency,
           radius,
+          distance,
           surge,
           rs.getTimestamp("requested_at").toInstant(),
           matched == null ? null : matched.toInstant(),
