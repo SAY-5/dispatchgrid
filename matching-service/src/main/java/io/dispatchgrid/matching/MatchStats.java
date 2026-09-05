@@ -25,6 +25,9 @@ public class MatchStats {
   private final AtomicLong matched = new AtomicLong();
   private final AtomicLong unmatched = new AtomicLong();
   private final AtomicLong dropped = new AtomicLong();
+  private final AtomicLong completed = new AtomicLong();
+  private final AtomicLong cancelled = new AtomicLong();
+  private final AtomicLong lifecycleIgnored = new AtomicLong();
   private final AtomicLong firstMatchAt = new AtomicLong();
   private final ConcurrentLinkedDeque<Long> recent = new ConcurrentLinkedDeque<>();
   private final long[] latencies = new long[RESERVOIR];
@@ -33,6 +36,8 @@ public class MatchStats {
   private final Timer timer;
   private final Counter matchedCounter;
   private final Counter unmatchedCounter;
+  private final Counter completedCounter;
+  private final Counter cancelledCounter;
 
   public MatchStats(MeterRegistry registry, Clock clock) {
     this.clock = clock;
@@ -42,6 +47,8 @@ public class MatchStats {
             .register(registry);
     this.matchedCounter = registry.counter("dispatchgrid.match.matched");
     this.unmatchedCounter = registry.counter("dispatchgrid.match.unmatched");
+    this.completedCounter = registry.counter("dispatchgrid.trip.completed");
+    this.cancelledCounter = registry.counter("dispatchgrid.trip.cancelled");
   }
 
   public void recordMatch(long latencyMs) {
@@ -66,6 +73,20 @@ public class MatchStats {
     dropped.incrementAndGet();
   }
 
+  public void recordCompleted() {
+    completed.incrementAndGet();
+    completedCounter.increment();
+  }
+
+  public void recordCancelled() {
+    cancelled.incrementAndGet();
+    cancelledCounter.increment();
+  }
+
+  public void recordLifecycleIgnored() {
+    lifecycleIgnored.incrementAndGet();
+  }
+
   private void trim(long now) {
     Long head;
     while ((head = recent.peekFirst()) != null && now - head > WINDOW_MS) {
@@ -84,6 +105,9 @@ public class MatchStats {
     out.put("matched", total);
     out.put("unmatched", unmatched.get());
     out.put("dropped", dropped.get());
+    out.put("completed", completed.get());
+    out.put("cancelled", cancelled.get());
+    out.put("lifecycleIgnored", lifecycleIgnored.get());
     out.put("matchesPerMinute", recent.size());
     out.put("matchesPerMinuteOverall", minutes == 0 ? 0 : Math.round(total / minutes));
     out.put("windowSeconds", WINDOW_MS / 1000);

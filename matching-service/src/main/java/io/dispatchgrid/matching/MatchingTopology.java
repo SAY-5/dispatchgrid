@@ -5,6 +5,7 @@ import io.dispatchgrid.common.model.DriverPosition;
 import io.dispatchgrid.common.model.Match;
 import io.dispatchgrid.common.model.RideRequest;
 import io.dispatchgrid.common.model.RideUnmatched;
+import io.dispatchgrid.common.model.TripEvent;
 import io.dispatchgrid.common.redis.DriverIndex;
 import io.dispatchgrid.common.serde.JsonSerde;
 import io.dispatchgrid.common.shard.CityShardRouter;
@@ -29,7 +30,8 @@ import org.springframework.kafka.annotation.EnableKafkaStreams;
  * ride-requests -> match -> ride-matches | ride-unmatched. Records stay keyed by city id, so all of
  * a city's decisions are made in order on one stream task while cities run in parallel. The
  * driver-positions topic is tapped read-only to keep the per-cell supply side of the surge signal
- * current; requests feed its demand side just before they are matched.
+ * current; requests feed its demand side just before they are matched. ride-lifecycle carries
+ * cancellations and completions, which free the driver's claim.
  */
 @Configuration
 @EnableKafkaStreams
@@ -66,6 +68,21 @@ public class MatchingTopology {
   public MatchService matchService(
       Matcher matcher, TripRepository trips, DriverIndex index, MatchStats stats) {
     return new MatchService(matcher, trips, index, stats);
+  }
+
+  @Bean
+  public LifecycleService lifecycleService(
+      TripRepository trips, DriverIndex index, MatchStats stats) {
+    return new LifecycleService(trips, index, stats);
+  }
+
+  @Bean
+  public KStream<String, TripEvent> tripEvents(StreamsBuilder builder, LifecycleService lifecycle) {
+    KStream<String, TripEvent> events =
+        builder.stream(
+            Topics.RIDE_LIFECYCLE, Consumed.with(Serdes.String(), JsonSerde.of(TripEvent.class)));
+    events.foreach((city, e) -> lifecycle.handle(e), Named.as("lifecycle"));
+    return events;
   }
 
   @Bean

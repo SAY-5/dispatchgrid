@@ -3,6 +3,8 @@ package io.dispatchgrid.driver;
 import io.dispatchgrid.common.kafka.Topics;
 import io.dispatchgrid.common.model.DriverPosition;
 import io.dispatchgrid.common.model.DriverStatus;
+import io.dispatchgrid.common.model.TripEvent;
+import io.dispatchgrid.common.model.TripEventType;
 import io.dispatchgrid.common.redis.DriverIndex;
 import io.dispatchgrid.common.redis.NearbyDriver;
 import jakarta.validation.Valid;
@@ -72,6 +74,34 @@ public class DriverController {
                 "cityId", p.cityId(),
                 "status", status.name(),
                 "expiresInMs", props.heartbeatTtl().toMillis()));
+  }
+
+  public record TripCompletion(@NotNull @Min(0) Integer cityId) {}
+
+  /**
+   * The driver reports the trip finished. The matching service moves the row to COMPLETED and puts
+   * the driver back in the pool; a completion for a ride the driver does not hold is ignored there,
+   * which is why this answers 202 rather than 200.
+   */
+  @PostMapping("/{driverId}/trips/{rideId}/complete")
+  public ResponseEntity<Map<String, Object>> complete(
+      @PathVariable String driverId,
+      @PathVariable String rideId,
+      @Valid @RequestBody TripCompletion body) {
+    TripEvent event =
+        new TripEvent(rideId, body.cityId(), driverId, TripEventType.COMPLETED, Instant.now(clock));
+    kafka.send(Topics.RIDE_LIFECYCLE, Topics.cityKey(event.cityId()), event);
+    return ResponseEntity.accepted()
+        .body(
+            Map.of(
+                "rideId",
+                rideId,
+                "driverId",
+                driverId,
+                "cityId",
+                event.cityId(),
+                "status",
+                "COMPLETING"));
   }
 
   @GetMapping("/nearby")

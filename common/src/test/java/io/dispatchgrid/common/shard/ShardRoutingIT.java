@@ -3,6 +3,7 @@ package io.dispatchgrid.common.shard;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.dispatchgrid.common.TestApp;
+import io.dispatchgrid.common.model.Match;
 import io.dispatchgrid.common.model.RideRequest;
 import io.dispatchgrid.common.model.TripStatus;
 import java.time.Instant;
@@ -101,6 +102,45 @@ class ShardRoutingIT {
                 Integer.class,
                 city1.rideId()))
         .isEqualTo(1);
+  }
+
+  @Test
+  void cancelAndCompleteOnlyMoveFromTheStatesTheyExpect() {
+    TripRepository trips = new TripRepository(router);
+    Instant now = Instant.now();
+    RideRequest done = request(1);
+    trips.insertRequested(done);
+    assertThat(trips.markCompleted(done.rideId(), 1, "d1", now)).isFalse();
+    assertThat(trips.markMatched(match(done.rideId(), "d1", now))).isTrue();
+    assertThat(trips.markCompleted(done.rideId(), 1, "someone-else", now)).isFalse();
+    assertThat(trips.markCompleted(done.rideId(), 1, "d1", now)).isTrue();
+    assertThat(trips.markCancelled(done.rideId(), 1, now)).isEmpty();
+    var finished = trips.find(1, done.rideId()).orElseThrow();
+    assertThat(finished.status()).isEqualTo(TripStatus.COMPLETED);
+    assertThat(finished.completedAt()).isNotNull();
+    assertThat(finished.cancelledAt()).isNull();
+
+    RideRequest gone = request(1);
+    trips.insertRequested(gone);
+    assertThat(trips.markMatched(match(gone.rideId(), "d2", now))).isTrue();
+    var before = trips.markCancelled(gone.rideId(), 1, now).orElseThrow();
+    assertThat(before.status()).isEqualTo(TripStatus.MATCHED);
+    assertThat(before.driverId()).isEqualTo("d2");
+    assertThat(trips.markCancelled(gone.rideId(), 1, now)).isEmpty();
+    assertThat(trips.markMatched(match(gone.rideId(), "d3", now))).isFalse();
+    assertThat(trips.find(1, gone.rideId()).orElseThrow().cancelledAt()).isNotNull();
+
+    JdbcTemplate s1 = new JdbcTemplate(router.shard(1));
+    assertThat(
+            s1.queryForList(
+                "SELECT event_type FROM ride_events WHERE ride_id = ? ORDER BY id",
+                String.class,
+                gone.rideId()))
+        .containsExactly("ride.requested", "ride.matched", "ride.cancelled");
+  }
+
+  private static Match match(String rideId, String driverId, Instant at) {
+    return new Match(rideId, driverId, 1, 120.0, 1000, 30, at, 1.0);
   }
 
   private static int count(JdbcTemplate jdbc, String rideId) {

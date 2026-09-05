@@ -15,6 +15,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import io.dispatchgrid.common.kafka.Topics;
 import io.dispatchgrid.common.model.DriverPosition;
 import io.dispatchgrid.common.model.DriverStatus;
+import io.dispatchgrid.common.model.TripEvent;
+import io.dispatchgrid.common.model.TripEventType;
 import io.dispatchgrid.common.redis.DriverIndex;
 import io.dispatchgrid.common.redis.NearbyDriver;
 import java.time.Clock;
@@ -91,5 +93,20 @@ class DriverControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].driverId").value("a"))
         .andExpect(jsonPath("$[1].distanceMeters").value(40.0));
+  }
+
+  @Test
+  void tripCompletionIsPublishedOnTheLifecycleTopicKeyedByCity() throws Exception {
+    mvc.perform(
+            post("/drivers/d-1/trips/ride-9/complete")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"cityId\":2}"))
+        .andExpect(status().isAccepted())
+        .andExpect(jsonPath("$.status").value("COMPLETING"));
+    verify(kafka)
+        .send(
+            Topics.RIDE_LIFECYCLE,
+            "2",
+            new TripEvent("ride-9", 2, "d-1", TripEventType.COMPLETED, NOW));
   }
 }

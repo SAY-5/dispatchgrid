@@ -2,6 +2,8 @@ package io.dispatchgrid.rider;
 
 import io.dispatchgrid.common.kafka.Topics;
 import io.dispatchgrid.common.model.RideRequest;
+import io.dispatchgrid.common.model.TripEvent;
+import io.dispatchgrid.common.model.TripEventType;
 import io.dispatchgrid.common.shard.CityShardRouter;
 import io.dispatchgrid.common.shard.TripRepository;
 import jakarta.validation.Valid;
@@ -12,6 +14,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -93,6 +96,39 @@ public class RideController {
     Optional<TripRepository.Trip> trip =
         city != null ? trips.find(city, rideId) : trips.findAnywhere(rideId);
     return trip.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+  }
+
+  /**
+   * Cancels a ride that is still REQUESTED or MATCHED. The row moves to CANCELLED here; the
+   * matching service releases the driver's claim when it sees the lifecycle event. A ride that
+   * already finished answers 409 with its current status.
+   */
+  @PostMapping("/{rideId}/cancel")
+  public ResponseEntity<Map<String, Object>> cancel(
+      @PathVariable String rideId, @RequestParam(required = false) Integer city) {
+    Optional<TripRepository.Trip> trip =
+        city != null ? trips.find(city, rideId) : trips.findAnywhere(rideId);
+    if (trip.isEmpty()) {
+      return ResponseEntity.notFound().build();
+    }
+    TripRepository.Trip t = trip.get();
+    Instant now = Instant.now(clock);
+    Optional<TripRepository.Trip> before = trips.markCancelled(rideId, t.cityId(), now);
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("rideId", rideId);
+    body.put("cityId", t.cityId());
+    if (before.isEmpty()) {
+      body.put("status", t.status().name());
+      return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+    TripEvent event =
+        new TripEvent(rideId, t.cityId(), before.get().driverId(), TripEventType.CANCELLED, now);
+    kafka.send(Topics.RIDE_LIFECYCLE, Topics.cityKey(t.cityId()), event);
+    body.put("status", "CANCELLED");
+    body.put("previousStatus", before.get().status().name());
+    body.put("driverId", before.get().driverId());
+    body.put("cancelledAt", now);
+    return ResponseEntity.ok(body);
   }
 
   /** Trip counts per shard, grouped by city and status. Shows where each city's rows live. */

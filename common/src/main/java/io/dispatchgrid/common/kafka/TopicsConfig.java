@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaAdmin;
 
-/** Declares the four topics so any service can bring up a fresh broker. */
+/** Declares the five topics so any service can bring up a fresh broker. */
 @AutoConfiguration(after = KafkaAutoConfiguration.class)
 @ConditionalOnBean(KafkaAdmin.class)
 public class TopicsConfig {
@@ -31,5 +31,10 @@ public class TopicsConfig {
   @Bean
   public NewTopic rideUnmatchedTopic() {
     return TopicBuilder.name(Topics.RIDE_UNMATCHED).partitions(Topics.PARTITIONS).build();
+  }
+
+  @Bean
+  public NewTopic rideLifecycleTopic() {
+    return TopicBuilder.name(Topics.RIDE_LIFECYCLE).partitions(Topics.PARTITIONS).build();
   }
 }

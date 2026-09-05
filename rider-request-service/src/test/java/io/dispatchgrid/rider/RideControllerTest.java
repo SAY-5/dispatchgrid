@@ -14,6 +14,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import io.dispatchgrid.common.kafka.Topics;
 import io.dispatchgrid.common.model.RideRequest;
+import io.dispatchgrid.common.model.TripEvent;
+import io.dispatchgrid.common.model.TripEventType;
 import io.dispatchgrid.common.model.TripStatus;
 import io.dispatchgrid.common.shard.CityShardRouter;
 import io.dispatchgrid.common.shard.TripRepository;
@@ -86,12 +88,14 @@ class RideControllerTest {
     verify(kafka, never()).send(any(), any(), any());
   }
 
+  private static TripRepository.Trip trip(TripStatus status, String driverId) {
+    return new TripRepository.Trip(
+        "abc", "r1", 2, status, 1, 2, 3, 4, driverId, 40, 1000, 1.0, NOW, NOW, null, null, 0);
+  }
+
   @Test
   void readsFromTheCityShardWhenCityIsGiven() throws Exception {
-    var trip =
-        new TripRepository.Trip(
-            "abc", "r1", 2, TripStatus.MATCHED, 1, 2, 3, 4, "d9", 40, 1000, 1.0, NOW, NOW, 0);
-    when(trips.find(2, "abc")).thenReturn(Optional.of(trip));
+    when(trips.find(2, "abc")).thenReturn(Optional.of(trip(TripStatus.MATCHED, "d9")));
     mvc.perform(get("/rides/abc").param("city", "2"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.driverId").value("d9"))
@@ -103,5 +107,32 @@ class RideControllerTest {
   void returns404ForUnknownRide() throws Exception {
     when(trips.findAnywhere("nope")).thenReturn(Optional.empty());
     mvc.perform(get("/rides/nope")).andExpect(status().isNotFound());
+  }
+
+  @Test
+  void cancelMovesTheRowAndTellsTheMatcherWhichDriverToFree() throws Exception {
+    var matched = trip(TripStatus.MATCHED, "d9");
+    when(trips.findAnywhere("abc")).thenReturn(Optional.of(matched));
+    when(trips.markCancelled("abc", 2, NOW)).thenReturn(Optional.of(matched));
+    mvc.perform(post("/rides/abc/cancel"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CANCELLED"))
+        .andExpect(jsonPath("$.previousStatus").value("MATCHED"))
+        .andExpect(jsonPath("$.driverId").value("d9"));
+    verify(kafka)
+        .send(
+            eq(Topics.RIDE_LIFECYCLE),
+            eq("2"),
+            eq(new TripEvent("abc", 2, "d9", TripEventType.CANCELLED, NOW)));
+  }
+
+  @Test
+  void cancelOfAFinishedRideIs409AndPublishesNothing() throws Exception {
+    when(trips.find(2, "abc")).thenReturn(Optional.of(trip(TripStatus.COMPLETED, "d9")));
+    when(trips.markCancelled("abc", 2, NOW)).thenReturn(Optional.empty());
+    mvc.perform(post("/rides/abc/cancel").param("city", "2"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value("COMPLETED"));
+    verify(kafka, never()).send(any(), any(), any());
   }
 }

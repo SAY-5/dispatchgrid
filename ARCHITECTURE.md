@@ -120,3 +120,27 @@ supply partition can be assigned to different instances, and each pod then price
 it sees. The demo accepts that (the load generator spreads both across all pods and `/pricing`
 is read behind the Service); the production version keeps the per-cell counters in a
 changelogged state store keyed by city so a task owns both sides, or in Redis next to the claims.
+
+## Trip lifecycle and who owns which side
+
+A trip row has two owners. The rider service owns the rider's intent (`REQUESTED`, `CANCELLED`)
+and the matching service owns the driver's side (`MATCHED`, `COMPLETED`, and the Redis claim). A
+cancellation therefore moves the row in the rider service, synchronously, so the rider gets a
+definitive answer, and then travels on `ride-lifecycle` to the matcher, which releases the claim.
+A completion goes the other way: the driver service only publishes, because it has no shard
+connection by design, and the matcher applies the conditional update (`status = MATCHED AND
+driver_id = ?`) before it frees the driver. A completion from a driver that does not hold the
+ride changes nothing and is counted as `lifecycleIgnored`.
+
+The two races this creates are both resolved by the conditional updates that were already there.
+A ride cancelled while the matcher is mid-search still gets claimed, but `markMatched` requires
+`REQUESTED`, so the matcher releases the driver it just took and drops the outcome, the same path
+that handles redelivery. A cancellation of a matched ride and the driver's own completion can
+cross on the topic; whichever lands first moves the row, the other becomes a no-op, and the
+driver is released exactly once because a release only succeeds for the ride that holds the
+claim. Every transition appends to `ride_events`, so the trip's timeline is reconstructible from
+one shard.
+
+Releasing on completion is what makes the claim TTL a safety net rather than the trip length.
+Before v3 the synthetic fleet cycled only because claims expired; now a driver returns to the
+pool the moment the trip ends, and the TTL only catches drivers whose app never reported.

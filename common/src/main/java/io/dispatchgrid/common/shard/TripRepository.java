@@ -2,6 +2,8 @@ package io.dispatchgrid.common.shard;
 
 import io.dispatchgrid.common.model.Match;
 import io.dispatchgrid.common.model.RideRequest;
+import io.dispatchgrid.common.model.TripEvent;
+import io.dispatchgrid.common.model.TripEventType;
 import io.dispatchgrid.common.model.TripStatus;
 import io.dispatchgrid.common.serde.Json;
 import java.sql.Timestamp;
@@ -36,6 +38,8 @@ public class TripRepository {
       Double surgeMultiplier,
       Instant requestedAt,
       Instant matchedAt,
+      Instant completedAt,
+      Instant cancelledAt,
       int shard) {}
 
   private JdbcTemplate jdbc(int cityId) {
@@ -114,6 +118,66 @@ public class TripRepository {
     return true;
   }
 
+  /**
+   * Cancels a trip that is still REQUESTED or MATCHED. Returns the row as it was before the
+   * transition so the caller knows whether a driver has to be released, or empty when the trip was
+   * unknown or already final.
+   */
+  public Optional<Trip> markCancelled(String rideId, int cityId, Instant at) {
+    Optional<Trip> before = find(cityId, rideId);
+    if (before.isEmpty()) {
+      return Optional.empty();
+    }
+    Trip t = before.get();
+    if (t.status() != TripStatus.REQUESTED && t.status() != TripStatus.MATCHED) {
+      return Optional.empty();
+    }
+    JdbcTemplate jdbc = jdbc(cityId);
+    int updated =
+        jdbc.update(
+            "UPDATE trips SET status = ?, cancelled_at = ? WHERE ride_id = ? AND status = ?",
+            TripStatus.CANCELLED.name(),
+            Timestamp.from(at),
+            rideId,
+            t.status().name());
+    if (updated == 0) {
+      return Optional.empty();
+    }
+    insertEvent(
+        jdbc,
+        rideId,
+        cityId,
+        "ride.cancelled",
+        new TripEvent(rideId, cityId, t.driverId(), TripEventType.CANCELLED, at));
+    return before;
+  }
+
+  /** Completes a MATCHED trip; only the driver it was matched to can complete it. */
+  public boolean markCompleted(String rideId, int cityId, String driverId, Instant at) {
+    JdbcTemplate jdbc = jdbc(cityId);
+    int updated =
+        jdbc.update(
+            """
+            UPDATE trips SET status = ?, completed_at = ?
+            WHERE ride_id = ? AND status = ? AND driver_id = ?
+            """,
+            TripStatus.COMPLETED.name(),
+            Timestamp.from(at),
+            rideId,
+            TripStatus.MATCHED.name(),
+            driverId);
+    if (updated == 0) {
+      return false;
+    }
+    insertEvent(
+        jdbc,
+        rideId,
+        cityId,
+        "ride.completed",
+        new TripEvent(rideId, cityId, driverId, TripEventType.COMPLETED, at));
+    return true;
+  }
+
   public Optional<Trip> find(int cityId, String rideId) {
     int shard = router.shardIndexFor(cityId);
     List<Trip> rows =
@@ -164,6 +228,8 @@ public class TripRepository {
   private static RowMapper<Trip> mapper(int shard) {
     return (rs, i) -> {
       Timestamp matched = rs.getTimestamp("matched_at");
+      Timestamp completed = rs.getTimestamp("completed_at");
+      Timestamp cancelled = rs.getTimestamp("cancelled_at");
       Integer latency = rs.getObject("match_latency_ms", Integer.class);
       Integer radius = rs.getObject("search_radius_m", Integer.class);
       Double surge = rs.getObject("surge_multiplier", Double.class);
@@ -182,6 +248,8 @@ public class TripRepository {
           surge,
           rs.getTimestamp("requested_at").toInstant(),
           matched == null ? null : matched.toInstant(),
+          completed == null ? null : completed.toInstant(),
+          cancelled == null ? null : cancelled.toInstant(),
           shard);
     };
   }

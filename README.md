@@ -81,6 +81,7 @@ come from `GET /matching/stats` on the matching service, and the shard distribut
 | --- | --- | --- |
 | POST | `/rides` | Body `{riderId, cityId, pickupLat, pickupLng, dropoffLat, dropoffLng}`. Writes the trip (status `REQUESTED`) to the city's shard and produces `ride.requested`. Returns 202 with `{rideId, cityId, shard, status, requestedAt}`. |
 | GET | `/rides/{rideId}?city=` | Reads the trip from the city's shard; without `city` it scans shards. 404 if unknown. |
+| POST | `/rides/{rideId}/cancel?city=` | Cancels a `REQUESTED` or `MATCHED` trip and produces `ride.cancelled` so the matcher frees the driver. 409 with the current status once the trip is final. |
 | GET | `/rides/stats` | Trip counts per shard grouped by `city:status`. |
 
 ### driver-location-service (port 8082)
@@ -88,6 +89,7 @@ come from `GET /matching/stats` on the matching service, and the shard distribut
 | Method | Path | Description |
 | --- | --- | --- |
 | POST | `/drivers/{driverId}/position` | Body `{cityId, lat, lng, status?}`. `GEOADD` into `drivers:geo:{cityId}`, heartbeat hash with a TTL (default 15 s) so silent drivers age out, and produces `driver.position`. `status: OFFLINE` removes the driver. |
+| POST | `/drivers/{driverId}/trips/{rideId}/complete` | Body `{cityId}`. Produces `ride.completed`; the matcher moves the row to `COMPLETED` (only for the matched driver) and puts the driver straight back in the pool instead of waiting for the claim TTL. |
 | GET | `/drivers/nearby?city&lat&lng&radius&limit` | `GEOSEARCH` nearest-first within `radius` meters. |
 | GET | `/drivers/count?city` | Available drivers in the city index. |
 
@@ -95,7 +97,7 @@ come from `GET /matching/stats` on the matching service, and the shard distribut
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/matching/stats` | `matched`, `unmatched`, `dropped`, `matchesPerMinute` (trailing 60 s), `matchesPerMinuteOverall`, `p50/p95/p99LatencyMs`. |
+| GET | `/matching/stats` | `matched`, `unmatched`, `dropped`, `completed`, `cancelled`, `lifecycleIgnored`, `matchesPerMinute` (trailing 60 s), `matchesPerMinuteOverall`, `p50/p95/p99LatencyMs`. |
 | GET | `/matching/config` | Effective radius and claim settings. |
 | GET | `/pricing/{city}` | Surge grid for the city: `maxMultiplier`, `surgingCells`, and every cell with `demand`, `supply`, `ratio`, `multiplier`, hottest first. |
 | GET | `/pricing/{city}/quote?lat&lng` | Multiplier for the cell containing a pickup point. |
@@ -113,6 +115,7 @@ and the Streams state for the matching service.
 | `driver-positions` | city id | `DriverPosition` | driver-location-service | matching-service (surge supply) |
 | `ride-matches` | city id | `Match` | matching-service | trip lifecycle consumers |
 | `ride-unmatched` | city id | `RideUnmatched` | matching-service | retry and pricing consumers |
+| `ride-lifecycle` | city id | `TripEvent` | rider-request-service (cancel), driver-location-service (complete) | matching-service (claim release) |
 
 Every topic is keyed by city id and has six partitions, so a city's events are ordered and the
 Streams topology processes different cities in parallel. Values are JSON produced by one shared
@@ -167,26 +170,30 @@ shard holds more than one city. The same script is the `k8s-e2e` job in `.github
 
 ## Tests
 
-43 unit tests (Surefire) and 13 integration tests (Failsafe, Testcontainers) across the five modules.
+49 unit tests (Surefire) and 14 integration tests (Failsafe, Testcontainers) across the five modules.
 
 * Unit: shard routing determinism and overrides, haversine, grid cells, radius expansion, matcher
   policy (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides,
   surge stamped from the pickup cell), surge tracker (window decay, supply TTL, clamping, minimum
-  demand), pricing endpoints, stats window and percentiles, controllers, load generator parsing.
+  demand), pricing endpoints, lifecycle (completion frees the claim only after the row moved,
+  cancellation frees only that ride's driver), stats window and percentiles, controllers, load
+  generator parsing.
 * Integration (Testcontainers): two MySQL shards with Flyway (trip lands in the shard for its
   city), Redis GEO ordering, heartbeat expiry, exclusive Lua claims under 64 concurrent claimers,
   the rider and driver services end to end against Redpanda, and the full Streams topology:
   300 requests in, 300 matches out with no driver assigned twice, rows updated in the right
-  shard with a surge multiplier, the pricing grid populated, redelivery dropped, and throughput
-  asserted at 500 or more matches per minute.
+  shard with a surge multiplier, the pricing grid populated, redelivery dropped, a completion and
+  a cancellation returning their drivers to the index while an impostor's completion is ignored,
+  and throughput asserted at 500 or more matches per minute. The shard test also drives the trip
+  state machine (complete only from MATCHED by the matched driver, cancel only while not final).
 
 ## Layout
 
 ```
 common/                   domain records, JSON serde, CityShardRouter, TripRepository,
                           RedisDriverIndex (GEO + Lua claims), readiness indicators, migrations
-rider-request-service/    POST /rides, GET /rides/{id}, GET /rides/stats
-driver-location-service/  POST /drivers/{id}/position, GET /drivers/nearby
+rider-request-service/    POST /rides, POST /rides/{id}/cancel, GET /rides/{id}, GET /rides/stats
+driver-location-service/  POST /drivers/{id}/position, POST /drivers/{id}/trips/{ride}/complete, GET /drivers/nearby
 matching-service/         Kafka Streams topology, Matcher, SurgeTracker, GET /matching/stats, GET /pricing
 loadgen/                  synthetic fleet and rider traffic with a measured summary
 deploy/docker-compose.yml local stack

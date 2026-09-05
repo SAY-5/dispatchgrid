@@ -6,6 +6,7 @@ public final class Topics {
   public static final String DRIVER_POSITIONS = "driver-positions";
   public static final String RIDE_MATCHES = "ride-matches";
   public static final String RIDE_UNMATCHED = "ride-unmatched";
+  public static final String RIDE_LIFECYCLE = "ride-lifecycle";
   public static final int PARTITIONS = 6;
 
   private Topics() {}

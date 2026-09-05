@@ -9,6 +9,8 @@ import io.dispatchgrid.common.model.DriverPosition;
 import io.dispatchgrid.common.model.DriverStatus;
 import io.dispatchgrid.common.model.Match;
 import io.dispatchgrid.common.model.RideRequest;
+import io.dispatchgrid.common.model.TripEvent;
+import io.dispatchgrid.common.model.TripEventType;
 import io.dispatchgrid.common.redis.DriverIndex;
 import io.dispatchgrid.common.serde.Json;
 import io.dispatchgrid.common.shard.CityShardRouter;
@@ -192,6 +194,63 @@ class MatchingTopologyIT {
     assertThat(after.get("dropped").asLong()).isEqualTo(1);
     assertThat(after.get("matched").asLong()).isEqualTo(RIDES);
     assertThat(index.size(1) + index.size(2)).isEqualTo(2L * DRIVERS_PER_CITY - RIDES);
+
+    // lifecycle: a completion moves the row and frees the driver; a cancellation frees the driver
+    Match done = matches.get(1);
+    Match gone = matches.get(2);
+    assertThat(trips.markCancelled(gone.rideId(), gone.cityId(), Instant.now())).isPresent();
+    try (KafkaProducer<String, byte[]> producer = producer()) {
+      producer.send(
+          new ProducerRecord<>(
+              Topics.RIDE_LIFECYCLE,
+              Topics.cityKey(done.cityId()),
+              Json.write(
+                  new TripEvent(
+                      done.rideId(),
+                      done.cityId(),
+                      done.driverId(),
+                      TripEventType.COMPLETED,
+                      Instant.now()))));
+      producer.send(
+          new ProducerRecord<>(
+              Topics.RIDE_LIFECYCLE,
+              Topics.cityKey(done.cityId()),
+              Json.write(
+                  new TripEvent(
+                      done.rideId(),
+                      done.cityId(),
+                      "impostor",
+                      TripEventType.COMPLETED,
+                      Instant.now()))));
+      producer.send(
+          new ProducerRecord<>(
+              Topics.RIDE_LIFECYCLE,
+              Topics.cityKey(gone.cityId()),
+              Json.write(
+                  new TripEvent(
+                      gone.rideId(),
+                      gone.cityId(),
+                      gone.driverId(),
+                      TripEventType.CANCELLED,
+                      Instant.now()))));
+      producer.flush();
+    }
+    deadline = System.currentTimeMillis() + 20_000;
+    while (rest.getForObject("/matching/stats", JsonNode.class).get("lifecycleIgnored").asLong() < 1
+        && System.currentTimeMillis() < deadline) {
+      Thread.sleep(200);
+    }
+    JsonNode lifecycle = rest.getForObject("/matching/stats", JsonNode.class);
+    assertThat(lifecycle.get("completed").asLong()).isEqualTo(1);
+    assertThat(lifecycle.get("cancelled").asLong()).isEqualTo(1);
+    assertThat(lifecycle.get("lifecycleIgnored").asLong()).isEqualTo(1);
+    assertThat(index.claimedBy(done.cityId(), done.driverId())).isNull();
+    assertThat(index.claimedBy(gone.cityId(), gone.driverId())).isNull();
+    assertThat(index.size(1) + index.size(2)).isEqualTo(2L * DRIVERS_PER_CITY - RIDES + 2);
+    assertThat(trips.find(done.cityId(), done.rideId()).orElseThrow().status().name())
+        .isEqualTo("COMPLETED");
+    assertThat(trips.find(gone.cityId(), gone.rideId()).orElseThrow().status().name())
+        .isEqualTo("CANCELLED");
 
     JsonNode readiness = rest.getForObject("/actuator/health/readiness", JsonNode.class);
     assertThat(readiness.get("status").asText()).isEqualTo("UP");
