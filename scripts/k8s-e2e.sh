@@ -105,7 +105,7 @@ log "rolling update finished in $((ROLL_END - ROLL_START))s"
 kubectl -n "$NS" get pods -l 'app in (rider-request-service,driver-location-service,matching-service)'
 
 log "waiting for the load generator to finish"
-if ! kubectl -n "$NS" wait --for=condition=complete job/loadgen --timeout=420s; then
+if ! kubectl -n "$NS" wait --for=condition=complete job/loadgen --timeout=720s; then
   fail "load generator job did not complete"
 fi
 

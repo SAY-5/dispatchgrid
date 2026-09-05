@@ -14,6 +14,9 @@ spring:
       properties:
         num.stream.threads: ${STREAM_THREADS:3}
         processing.guarantee: at_least_once
+        num.standby.replicas: 1
+        group.instance.id: ${STREAMS_INSTANCE_ID:matching-local}
+        session.timeout.ms: 20000
         commit.interval.ms: 200
         default.deserialization.exception.handler: org.apache.kafka.streams.errors.LogAndContinueExceptionHandler
         auto.offset.reset: earliest
