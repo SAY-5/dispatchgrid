@@ -19,7 +19,7 @@ metadata:
   labels:
     app: matching-service
 spec:
-  replicas: 1
+  replicas: 2
   revisionHistoryLimit: 3
   strategy:
     type: RollingUpdate
@@ -54,6 +54,10 @@ spec:
                 secretKeyRef:
                   name: dispatchgrid-shard-credentials
                   key: SHARD_PASSWORD
+            - name: STREAMS_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: STREAM_THREADS
               value: "3"
             - name: STREAMS_STATE_DIR

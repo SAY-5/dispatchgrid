@@ -26,6 +26,8 @@ spec:
               value: http://matching-service:8083
             - name: DURATION_SECONDS
               value: "DURATION_PLACEHOLDER"
+            - name: SETTLE_SECONDS
+              value: "180"
             - name: RIDES_PER_SECOND
               value: "10"
             - name: DRIVERS_PER_CITY
