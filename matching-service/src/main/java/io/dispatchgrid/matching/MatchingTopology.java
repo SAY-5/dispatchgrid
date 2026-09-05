@@ -21,6 +21,7 @@ import org.apache.kafka.streams.kstream.Consumed;
 import org.apache.kafka.streams.kstream.KStream;
 import org.apache.kafka.streams.kstream.Named;
 import org.apache.kafka.streams.kstream.Produced;
+import org.apache.kafka.streams.state.Stores;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -31,7 +32,8 @@ import org.springframework.kafka.annotation.EnableKafkaStreams;
  * a city's decisions are made in order on one stream task while cities run in parallel. The
  * driver-positions topic is tapped read-only to keep the per-cell supply side of the surge signal
  * current; requests feed its demand side just before they are matched. ride-lifecycle carries
- * cancellations and completions, which free the driver's claim.
+ * cancellations and completions, which free the driver's claim. Rides that find nobody wait in a
+ * changelogged store and are retried by a wall-clock punctuator before they are given up on.
  */
 @Configuration
 @EnableKafkaStreams
@@ -66,8 +68,12 @@ public class MatchingTopology {
 
   @Bean
   public MatchService matchService(
-      Matcher matcher, TripRepository trips, DriverIndex index, MatchStats stats) {
-    return new MatchService(matcher, trips, index, stats);
+      Matcher matcher,
+      TripRepository trips,
+      DriverIndex index,
+      MatchStats stats,
+      MatchingProperties props) {
+    return new MatchService(matcher, trips, index, stats, props.retry().maxAttempts());
   }
 
   @Bean
@@ -98,7 +104,12 @@ public class MatchingTopology {
 
   @Bean
   public KStream<String, RideRequest> rideRequests(
-      StreamsBuilder builder, MatchService service, SurgeTracker surge) {
+      StreamsBuilder builder, MatchService service, SurgeTracker surge, MatchingProperties props) {
+    builder.addStateStore(
+        Stores.keyValueStoreBuilder(
+            Stores.persistentKeyValueStore(RetryingMatchProcessor.STORE),
+            Serdes.String(),
+            JsonSerde.of(PendingRetry.class)));
     KStream<String, RideRequest> requests =
         builder.stream(
             Topics.RIDE_REQUESTS, Consumed.with(Serdes.String(), JsonSerde.of(RideRequest.class)));
@@ -108,7 +119,10 @@ public class MatchingTopology {
             .peek(
                 (city, r) -> surge.recordRequest(r.cityId(), r.pickupLat(), r.pickupLng()),
                 Named.as("surge-demand"))
-            .flatMapValues(service::handle, Named.as("match"));
+            .process(
+                () -> new RetryingMatchProcessor(service, props.retry()),
+                Named.as("match"),
+                RetryingMatchProcessor.STORE);
 
     outcomes
         .split(Named.as("outcome-"))

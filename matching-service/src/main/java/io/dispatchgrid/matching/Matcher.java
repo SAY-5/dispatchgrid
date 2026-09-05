@@ -46,6 +46,11 @@ public class Matcher {
   static final int MAX_CANDIDATES_PER_RING = 64;
 
   public MatchOutcome match(RideRequest r) {
+    return match(r, 1);
+  }
+
+  /** One pass; {@code attempt} is 1-based and only stamped on the unmatched result. */
+  public MatchOutcome match(RideRequest r, int attempt) {
     int taken = 0;
     for (int radius : expansion.radii()) {
       int limit = props.candidatesPerRadius();
@@ -85,6 +90,6 @@ public class Matcher {
     String reason = taken > 0 ? "all_candidates_taken" : "no_drivers_in_range";
     return MatchOutcome.unmatched(
         new RideUnmatched(
-            r.rideId(), r.cityId(), props.maxRadiusMeters(), reason, clock.instant()));
+            r.rideId(), r.cityId(), props.maxRadiusMeters(), reason, attempt, clock.instant()));
   }
 }

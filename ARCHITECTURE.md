@@ -144,3 +144,27 @@ one shard.
 Releasing on completion is what makes the claim TTL a safety net rather than the trip length.
 Before v3 the synthetic fleet cycled only because claims expired; now a driver returns to the
 pool the moment the trip ends, and the TTL only catches drivers whose app never reported.
+
+## Retrying instead of failing fast
+
+The first version reported a ride unmatched the moment one search found nobody. That is the
+wrong answer for a marketplace: supply changes every second, and a driver who completes a trip
+two blocks away ten seconds later would have taken the ride. The matcher now keeps the request
+and tries again. The request path is a Processor API node with a persistent key-value store,
+`pending-retries`, keyed by ride id. A pass that finds nobody before the last attempt writes the
+request into the store with a due time, appends `ride.retry` to the timeline, and emits nothing;
+a wall-clock punctuator (every second) replays the entries that are due. Attempt n waits
+`n * backoff`, so with the defaults a ride is tried at 0 s, 5 s, and 15 s before it is given up
+on, and only then is the row moved to `UNMATCHED` and the event published with `attempts`.
+
+The store is changelogged, which is what makes this safe to run on Kubernetes: the pending set
+is replayed into the standby on the other matching pod, so a rolling update or a crash moves the
+waiting rides with the task instead of losing them. Punctuation is wall-clock rather than
+stream-time because the trigger is real time passing with no new records, which is exactly when
+stream time stands still. The cost is one full scan of the (small) store per tick per task; a
+time-ordered store would remove that scan if the pending set ever grew large.
+
+The retry path reuses the matcher unchanged and keeps the trip row `REQUESTED` between attempts,
+so a cancellation during the wait is handled by the same conditional update as before: the
+replayed pass claims a driver, `markMatched` sees the row is no longer `REQUESTED`, releases the
+claim, and drops the outcome.

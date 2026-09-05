@@ -43,6 +43,10 @@ matching:
   max-radius-meters: ${MATCH_MAX_RADIUS_M:8000}
   candidates-per-radius: 20
   claim-ttl: ${MATCH_CLAIM_TTL:20s}
+  retry:
+    max-attempts: ${MATCH_RETRY_ATTEMPTS:3}
+    backoff: ${MATCH_RETRY_BACKOFF:5s}
+    tick: 1s
 
 surge:
   cell-meters: ${SURGE_CELL_M:1000}

@@ -25,7 +25,7 @@ class MatcherTest {
 
   private final InMemoryDriverIndex index = new InMemoryDriverIndex();
   private final MatchingProperties props =
-      new MatchingProperties(1000, 2.0, 8000, 3, Duration.ofSeconds(20));
+      new MatchingProperties(1000, 2.0, 8000, 3, Duration.ofSeconds(20), null);
 
   private Matcher matcher(long nowOffsetMs) {
     return new Matcher(index, props, Clock.fixed(T0.plusMillis(nowOffsetMs), ZoneOffset.UTC));

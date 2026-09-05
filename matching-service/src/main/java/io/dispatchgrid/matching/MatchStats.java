@@ -25,6 +25,7 @@ public class MatchStats {
   private final AtomicLong matched = new AtomicLong();
   private final AtomicLong unmatched = new AtomicLong();
   private final AtomicLong dropped = new AtomicLong();
+  private final AtomicLong retries = new AtomicLong();
   private final AtomicLong completed = new AtomicLong();
   private final AtomicLong cancelled = new AtomicLong();
   private final AtomicLong lifecycleIgnored = new AtomicLong();
@@ -36,6 +37,7 @@ public class MatchStats {
   private final Timer timer;
   private final Counter matchedCounter;
   private final Counter unmatchedCounter;
+  private final Counter retryCounter;
   private final Counter completedCounter;
   private final Counter cancelledCounter;
 
@@ -47,6 +49,7 @@ public class MatchStats {
             .register(registry);
     this.matchedCounter = registry.counter("dispatchgrid.match.matched");
     this.unmatchedCounter = registry.counter("dispatchgrid.match.unmatched");
+    this.retryCounter = registry.counter("dispatchgrid.match.retries");
     this.completedCounter = registry.counter("dispatchgrid.trip.completed");
     this.cancelledCounter = registry.counter("dispatchgrid.trip.cancelled");
   }
@@ -71,6 +74,11 @@ public class MatchStats {
 
   public void recordDropped() {
     dropped.incrementAndGet();
+  }
+
+  public void recordRetry() {
+    retries.incrementAndGet();
+    retryCounter.increment();
   }
 
   public void recordCompleted() {
@@ -105,6 +113,7 @@ public class MatchStats {
     out.put("matched", total);
     out.put("unmatched", unmatched.get());
     out.put("dropped", dropped.get());
+    out.put("retries", retries.get());
     out.put("completed", completed.get());
     out.put("cancelled", cancelled.get());
     out.put("lifecycleIgnored", lifecycleIgnored.get());

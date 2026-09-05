@@ -11,7 +11,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Glue between the stream and the stores: run the matcher, persist the outcome in the city shard,
  * and update stats. Delivery is at-least-once, so a redelivered request whose trip is no longer
- * REQUESTED releases the claim it just took and is dropped instead of being emitted twice.
+ * REQUESTED releases the claim it just took and is dropped instead of being emitted twice. A pass
+ * that finds nobody before the last attempt leaves the row REQUESTED, appends a retry event to the
+ * timeline, and hands the request back to the retry processor.
  */
 public class MatchService {
   private static final Logger log = LoggerFactory.getLogger(MatchService.class);
@@ -20,17 +22,24 @@ public class MatchService {
   private final TripRepository trips;
   private final DriverIndex index;
   private final MatchStats stats;
+  private final int maxAttempts;
 
-  public MatchService(Matcher matcher, TripRepository trips, DriverIndex index, MatchStats stats) {
+  public MatchService(
+      Matcher matcher, TripRepository trips, DriverIndex index, MatchStats stats, int maxAttempts) {
     this.matcher = matcher;
     this.trips = trips;
     this.index = index;
     this.stats = stats;
+    this.maxAttempts = Math.max(1, maxAttempts);
   }
 
-  /** Returns zero or one outcome to emit downstream. */
   public List<MatchOutcome> handle(RideRequest request) {
-    MatchOutcome outcome = matcher.match(request);
+    return handle(request, 1);
+  }
+
+  /** Returns zero or one outcome; a retry outcome is held by the caller, not emitted. */
+  public List<MatchOutcome> handle(RideRequest request, int attempt) {
+    MatchOutcome outcome = matcher.match(request, attempt);
     if (outcome.isMatched()) {
       Match m = outcome.match();
       if (!trips.markMatched(m)) {
@@ -43,6 +52,17 @@ public class MatchService {
       return List.of(outcome);
     }
     var u = outcome.unmatched();
+    if (attempt < maxAttempts) {
+      trips.appendEvent(u.rideId(), u.cityId(), "ride.retry", u);
+      stats.recordRetry();
+      log.info(
+          "retry ride={} city={} attempt={} reason={}",
+          u.rideId(),
+          u.cityId(),
+          attempt,
+          u.reason());
+      return List.of(MatchOutcome.retry(u));
+    }
     if (!trips.markUnmatched(u.rideId(), u.cityId(), u)) {
       stats.recordDropped();
       return List.of();

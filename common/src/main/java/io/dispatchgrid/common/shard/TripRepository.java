@@ -215,6 +215,11 @@ public class TripRepository {
     return out;
   }
 
+  /** Appends a timeline entry without touching the trip row (retries, offers, notes). */
+  public void appendEvent(String rideId, int cityId, String type, Object payload) {
+    insertEvent(jdbc(cityId), rideId, cityId, type, payload);
+  }
+
   private static void insertEvent(
       JdbcTemplate jdbc, String rideId, int cityId, String type, Object payload) {
     jdbc.update(

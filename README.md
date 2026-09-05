@@ -97,8 +97,8 @@ come from `GET /matching/stats` on the matching service, and the shard distribut
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/matching/stats` | `matched`, `unmatched`, `dropped`, `completed`, `cancelled`, `lifecycleIgnored`, `matchesPerMinute` (trailing 60 s), `matchesPerMinuteOverall`, `p50/p95/p99LatencyMs`. |
-| GET | `/matching/config` | Effective radius and claim settings. |
+| GET | `/matching/stats` | `matched`, `unmatched`, `dropped`, `retries`, `completed`, `cancelled`, `lifecycleIgnored`, `matchesPerMinute` (trailing 60 s), `matchesPerMinuteOverall`, `p50/p95/p99LatencyMs`. |
+| GET | `/matching/config` | Effective radius, claim, and retry settings. |
 | GET | `/pricing/{city}` | Surge grid for the city: `maxMultiplier`, `surgingCells`, and every cell with `demand`, `supply`, `ratio`, `multiplier`, hottest first. |
 | GET | `/pricing/{city}/quote?lat&lng` | Multiplier for the cell containing a pickup point. |
 
@@ -114,12 +114,15 @@ and the Streams state for the matching service.
 | `ride-requests` | city id | `RideRequest` | rider-request-service | matching-service (Streams) |
 | `driver-positions` | city id | `DriverPosition` | driver-location-service | matching-service (surge supply) |
 | `ride-matches` | city id | `Match` | matching-service | trip lifecycle consumers |
-| `ride-unmatched` | city id | `RideUnmatched` | matching-service | retry and pricing consumers |
+| `ride-unmatched` | city id | `RideUnmatched` (with `attempts`) | matching-service | pricing and alerting consumers |
 | `ride-lifecycle` | city id | `TripEvent` | rider-request-service (cancel), driver-location-service (complete) | matching-service (claim release) |
 
 Every topic is keyed by city id and has six partitions, so a city's events are ordered and the
 Streams topology processes different cities in parallel. Values are JSON produced by one shared
-Jackson mapper (`common/serde`).
+Jackson mapper (`common/serde`). The matcher also owns one changelogged state store,
+`pending-retries`, where a ride that found no free driver waits for its next attempt
+(`matching.retry`: 3 attempts, 5 s base backoff growing linearly, 1 s tick); a ride is only
+published to `ride-unmatched` after the last attempt.
 
 ## Shard scheme
 
@@ -170,13 +173,15 @@ shard holds more than one city. The same script is the `k8s-e2e` job in `.github
 
 ## Tests
 
-49 unit tests (Surefire) and 14 integration tests (Failsafe, Testcontainers) across the five modules.
+51 unit tests (Surefire) and 14 integration tests (Failsafe, Testcontainers) across the five modules.
 
 * Unit: shard routing determinism and overrides, haversine, grid cells, radius expansion, matcher
   policy (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides,
   surge stamped from the pickup cell), surge tracker (window decay, supply TTL, clamping, minimum
   demand), pricing endpoints, lifecycle (completion frees the claim only after the row moved,
-  cancellation frees only that ride's driver), stats window and percentiles, controllers, load
+  cancellation frees only that ride's driver), the retry path through the real topology under
+  `TopologyTestDriver` with a mocked wall clock (a ride waits for a driver that arrives later, a
+  ride gives up after the third attempt), stats window and percentiles, controllers, load
   generator parsing.
 * Integration (Testcontainers): two MySQL shards with Flyway (trip lands in the shard for its
   city), Redis GEO ordering, heartbeat expiry, exclusive Lua claims under 64 concurrent claimers,
@@ -184,7 +189,8 @@ shard holds more than one city. The same script is the `k8s-e2e` job in `.github
   300 requests in, 300 matches out with no driver assigned twice, rows updated in the right
   shard with a surge multiplier, the pricing grid populated, redelivery dropped, a completion and
   a cancellation returning their drivers to the index while an impostor's completion is ignored,
-  and throughput asserted at 500 or more matches per minute. The shard test also drives the trip
+  a ride in an empty city matched on retry once a driver appears and another reported unmatched
+  after three attempts, and throughput asserted at 500 or more matches per minute. The shard test also drives the trip
   state machine (complete only from MATCHED by the matched driver, cancel only while not final).
 
 ## Layout

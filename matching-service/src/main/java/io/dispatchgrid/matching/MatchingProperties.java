@@ -5,8 +5,9 @@ import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Matching knobs. The claim TTL doubles as the simulated trip length: a claimed driver returns to
- * the pool automatically when it expires, which keeps the synthetic fleet cycling under load.
+ * Matching knobs. The claim TTL is the safety net for drivers whose app never reports a completion:
+ * a claimed driver returns to the pool when it expires. Retry settings bound how long a ride waits
+ * for a driver to free up before it is reported unmatched.
  */
 @ConfigurationProperties(prefix = "matching")
 public record MatchingProperties(
@@ -14,7 +15,26 @@ public record MatchingProperties(
     double radiusFactor,
     int maxRadiusMeters,
     int candidatesPerRadius,
-    Duration claimTtl) {
+    Duration claimTtl,
+    Retry retry) {
+
+  /**
+   * A ride gets {@code maxAttempts} passes; attempt n waits {@code n * backoff} before the next.
+   * The punctuator that replays due rides runs every {@code tick}.
+   */
+  public record Retry(int maxAttempts, Duration backoff, Duration tick) {
+    public Retry {
+      if (maxAttempts <= 0) {
+        maxAttempts = 3;
+      }
+      if (backoff == null || backoff.isNegative() || backoff.isZero()) {
+        backoff = Duration.ofSeconds(5);
+      }
+      if (tick == null || tick.isNegative() || tick.isZero()) {
+        tick = Duration.ofSeconds(1);
+      }
+    }
+  }
 
   public MatchingProperties {
     if (initialRadiusMeters <= 0) {
@@ -31,6 +51,9 @@ public record MatchingProperties(
     }
     if (claimTtl == null) {
       claimTtl = Duration.ofSeconds(20);
+    }
+    if (retry == null) {
+      retry = new Retry(0, null, null);
     }
   }
 

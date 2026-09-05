@@ -52,7 +52,11 @@ import org.testcontainers.redpanda.RedpandaContainer;
 @Testcontainers
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = {"matching.claim-ttl=10m", "matching.initial-radius-meters=1000"})
+    properties = {
+      "matching.claim-ttl=10m",
+      "matching.initial-radius-meters=1000",
+      "matching.retry.backoff=1s"
+    })
 class MatchingTopologyIT {
   static final int RIDES = 300;
   static final int DRIVERS_PER_CITY = 200;
@@ -251,6 +255,76 @@ class MatchingTopologyIT {
         .isEqualTo("COMPLETED");
     assertThat(trips.find(gone.cityId(), gone.rideId()).orElseThrow().status().name())
         .isEqualTo("CANCELLED");
+
+    // retries: a ride in a city with no free driver waits for one instead of failing outright
+    double[] c3 = CENTERS.get(1);
+    RideRequest waiting =
+        new RideRequest(
+            UUID.randomUUID().toString(),
+            "rider-wait",
+            3,
+            c3[0],
+            c3[1],
+            c3[0],
+            c3[1],
+            Instant.now());
+    trips.insertRequested(waiting);
+    try (KafkaProducer<String, byte[]> producer = producer()) {
+      producer.send(
+          new ProducerRecord<>(Topics.RIDE_REQUESTS, Topics.cityKey(3), Json.write(waiting)));
+      producer.flush();
+    }
+    deadline = System.currentTimeMillis() + 20_000;
+    while (rest.getForObject("/matching/stats", JsonNode.class).get("retries").asLong() < 1
+        && System.currentTimeMillis() < deadline) {
+      Thread.sleep(200);
+    }
+    index.upsert(
+        new DriverPosition("d-3-late", 3, c3[0], c3[1], DriverStatus.AVAILABLE, Instant.now()),
+        Duration.ofMinutes(10));
+    List<Match> late = consumeMatches(RIDES + 1, Duration.ofSeconds(30));
+    assertThat(late).extracting(Match::rideId).contains(waiting.rideId());
+    assertThat(
+            late.stream()
+                .filter(m -> m.rideId().equals(waiting.rideId()))
+                .findFirst()
+                .orElseThrow()
+                .driverId())
+        .isEqualTo("d-3-late");
+    assertThat(trips.find(3, waiting.rideId()).orElseThrow().status().name()).isEqualTo("MATCHED");
+
+    RideRequest hopeless =
+        new RideRequest(
+            UUID.randomUUID().toString(),
+            "rider-none",
+            3,
+            c3[0],
+            c3[1],
+            c3[0],
+            c3[1],
+            Instant.now());
+    trips.insertRequested(hopeless);
+    try (KafkaProducer<String, byte[]> producer = producer()) {
+      producer.send(
+          new ProducerRecord<>(Topics.RIDE_REQUESTS, Topics.cityKey(3), Json.write(hopeless)));
+      producer.flush();
+    }
+    deadline = System.currentTimeMillis() + 30_000;
+    while (rest.getForObject("/matching/stats", JsonNode.class).get("unmatched").asLong() < 1
+        && System.currentTimeMillis() < deadline) {
+      Thread.sleep(200);
+    }
+    JsonNode retried = rest.getForObject("/matching/stats", JsonNode.class);
+    assertThat(retried.get("unmatched").asLong()).isEqualTo(1);
+    assertThat(retried.get("retries").asLong()).isEqualTo(3);
+    assertThat(trips.find(3, hopeless.rideId()).orElseThrow().status().name())
+        .isEqualTo("UNMATCHED");
+    assertThat(
+            s1.queryForObject(
+                "SELECT COUNT(*) FROM ride_events WHERE ride_id = ? AND event_type = 'ride.retry'",
+                Integer.class,
+                hopeless.rideId()))
+        .isEqualTo(2);
 
     JsonNode readiness = rest.getForObject("/actuator/health/readiness", JsonNode.class);
     assertThat(readiness.get("status").asText()).isEqualTo("UP");
