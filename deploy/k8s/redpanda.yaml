@@ -44,6 +44,7 @@ spec:
               command: ["sh", "-c", "rpk cluster health | grep -q 'Healthy:.*true'"]
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 5
             failureThreshold: 30
           livenessProbe:
             tcpSocket:
