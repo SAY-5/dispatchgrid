@@ -55,6 +55,24 @@ class MatcherTest {
   }
 
   @Test
+  void stampsTheSurgeMultiplierOfThePickupCellOnTheMatch() {
+    driver("d", 1, 200);
+    Matcher m =
+        new Matcher(
+            index,
+            props,
+            (city, lat, lng) -> city == 1 ? 1.8 : 1.0,
+            Clock.fixed(T0, ZoneOffset.UTC));
+    assertThat(m.match(ride("r1", 1)).match().surgeMultiplier()).isEqualTo(1.8);
+  }
+
+  @Test
+  void matchesWithoutSurgeWhenNoPricingIsWired() {
+    driver("d", 1, 200);
+    assertThat(matcher(0).match(ride("r1", 1)).match().surgeMultiplier()).isEqualTo(1.0);
+  }
+
+  @Test
   void expandsRadiusUntilADriverIsFound() {
     driver("d", 1, 3500);
     MatchOutcome out = matcher(0).match(ride("r1", 1));

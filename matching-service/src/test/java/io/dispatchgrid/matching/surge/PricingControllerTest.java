@@ -27,7 +27,8 @@ class PricingControllerTest {
 
   @Test
   void reportsCityGridHottestCellFirst() throws Exception {
-    surge.recordDriver(new DriverPosition("d1", 1, 47.6062, -122.3321, DriverStatus.AVAILABLE, NOW));
+    surge.recordDriver(
+        new DriverPosition("d1", 1, 47.6062, -122.3321, DriverStatus.AVAILABLE, NOW));
     for (int i = 0; i < 3; i++) {
       surge.recordRequest(1, 47.6062, -122.3321);
     }

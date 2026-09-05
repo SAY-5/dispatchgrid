@@ -143,6 +143,7 @@ class MatchingTopologyIT {
     assertThat(matches)
         .allSatisfy(m -> assertThat(m.driverId()).startsWith("d-" + m.cityId() + "-"));
     assertThat(perMinute).isGreaterThanOrEqualTo(500);
+    assertThat(matches).allSatisfy(m -> assertThat(m.surgeMultiplier()).isBetween(1.0, 3.0));
 
     JdbcTemplate s0 = new JdbcTemplate(router.shard(0));
     JdbcTemplate s1 = new JdbcTemplate(router.shard(1));
@@ -159,6 +160,14 @@ class MatchingTopologyIT {
                 "SELECT COUNT(*) FROM ride_events WHERE event_type = 'ride.matched'",
                 Integer.class))
         .isEqualTo(RIDES / 2);
+
+    JsonNode pricing = rest.getForObject("/pricing/1", JsonNode.class);
+    assertThat(pricing.get("cityId").asInt()).isEqualTo(1);
+    assertThat(pricing.get("cells").size()).isGreaterThan(0);
+    assertThat(
+            s1.queryForObject(
+                "SELECT MIN(surge_multiplier) FROM trips WHERE status = 'MATCHED'", Double.class))
+        .isGreaterThanOrEqualTo(1.0);
 
     JsonNode stats = rest.getForObject("/matching/stats", JsonNode.class);
     assertThat(stats.get("matched").asLong()).isEqualTo(RIDES);

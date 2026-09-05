@@ -139,8 +139,7 @@ class SurgeTrackerTest {
   @Test
   void busyAndOfflineDriversAreNotSupply() {
     driver("d1", 1, LAT, LNG);
-    surge.recordDriver(
-        new DriverPosition("d1", 1, LAT, LNG, DriverStatus.BUSY, clock.instant()));
+    surge.recordDriver(new DriverPosition("d1", 1, LAT, LNG, DriverStatus.BUSY, clock.instant()));
     surge.recordRequest(1, LAT, LNG);
     surge.recordRequest(1, LAT, LNG);
     assertThat(surge.multiplierAt(1, LAT, LNG)).isEqualTo(1.5);

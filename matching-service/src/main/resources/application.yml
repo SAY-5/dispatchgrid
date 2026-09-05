@@ -41,6 +41,14 @@ matching:
   candidates-per-radius: 20
   claim-ttl: ${MATCH_CLAIM_TTL:20s}
 
+surge:
+  cell-meters: ${SURGE_CELL_M:1000}
+  demand-window: ${SURGE_DEMAND_WINDOW:60s}
+  supply-ttl: ${SURGE_SUPPLY_TTL:15s}
+  slope: 0.5
+  max-multiplier: ${SURGE_MAX_MULTIPLIER:3.0}
+  min-demand: 2
+
 management:
   endpoints:
     web:

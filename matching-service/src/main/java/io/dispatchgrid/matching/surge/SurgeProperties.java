@@ -5,10 +5,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Surge knobs. Demand is the number of ride requests seen in a cell during {@code demandWindow};
- * supply is the number of available drivers whose last position in the cell is younger than
- * {@code supplyTtl}. The multiplier is {@code 1 + slope * (demand / supply - 1)} clamped to
- * {@code [1, maxMultiplier]}, and only kicks in once a cell has at least {@code minDemand}
- * requests so a single ride in an empty cell does not surge.
+ * supply is the number of available drivers whose last position in the cell is younger than {@code
+ * supplyTtl}. The multiplier is {@code 1 + slope * (demand / supply - 1)} clamped to {@code [1,
+ * maxMultiplier]}, and only kicks in once a cell has at least {@code minDemand} requests so a
+ * single ride in an empty cell does not surge.
  */
 @ConfigurationProperties(prefix = "surge")
 public record SurgeProperties(

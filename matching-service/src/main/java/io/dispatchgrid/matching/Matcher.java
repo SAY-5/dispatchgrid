@@ -7,6 +7,7 @@ import io.dispatchgrid.common.model.RideUnmatched;
 import io.dispatchgrid.common.redis.ClaimResult;
 import io.dispatchgrid.common.redis.DriverIndex;
 import io.dispatchgrid.common.redis.NearbyDriver;
+import io.dispatchgrid.matching.surge.SurgePricing;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -20,6 +21,7 @@ public class Matcher {
   private final DriverIndex index;
   private final MatchingProperties props;
   private final RadiusExpansion expansion;
+  private final SurgePricing surge;
   private final Clock clock;
 
   public Matcher(DriverIndex index, MatchingProperties props) {
@@ -27,9 +29,14 @@ public class Matcher {
   }
 
   public Matcher(DriverIndex index, MatchingProperties props, Clock clock) {
+    this(index, props, SurgePricing.NONE, clock);
+  }
+
+  public Matcher(DriverIndex index, MatchingProperties props, SurgePricing surge, Clock clock) {
     this.index = index;
     this.props = props;
     this.expansion = props.expansion();
+    this.surge = surge;
     this.clock = clock;
   }
 
@@ -58,7 +65,8 @@ public class Matcher {
                     c.distanceMeters(),
                     radius,
                     Math.max(0, now.toEpochMilli() - r.requestedAt().toEpochMilli()),
-                    now));
+                    now,
+                    surge.multiplierAt(r.cityId(), r.pickupLat(), r.pickupLng())));
           }
           if (result == ClaimResult.TAKEN) {
             takenHere++;

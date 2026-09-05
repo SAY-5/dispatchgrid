@@ -1,6 +1,7 @@
 package io.dispatchgrid.matching;
 
 import io.dispatchgrid.common.kafka.Topics;
+import io.dispatchgrid.common.model.DriverPosition;
 import io.dispatchgrid.common.model.Match;
 import io.dispatchgrid.common.model.RideRequest;
 import io.dispatchgrid.common.model.RideUnmatched;
@@ -8,6 +9,8 @@ import io.dispatchgrid.common.redis.DriverIndex;
 import io.dispatchgrid.common.serde.JsonSerde;
 import io.dispatchgrid.common.shard.CityShardRouter;
 import io.dispatchgrid.common.shard.TripRepository;
+import io.dispatchgrid.matching.surge.SurgeProperties;
+import io.dispatchgrid.matching.surge.SurgeTracker;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import org.apache.kafka.common.serialization.Serdes;
@@ -24,11 +27,13 @@ import org.springframework.kafka.annotation.EnableKafkaStreams;
 
 /**
  * ride-requests -> match -> ride-matches | ride-unmatched. Records stay keyed by city id, so all of
- * a city's decisions are made in order on one stream task while cities run in parallel.
+ * a city's decisions are made in order on one stream task while cities run in parallel. The
+ * driver-positions topic is tapped read-only to keep the per-cell supply side of the surge signal
+ * current; requests feed its demand side just before they are matched.
  */
 @Configuration
 @EnableKafkaStreams
-@EnableConfigurationProperties(MatchingProperties.class)
+@EnableConfigurationProperties({MatchingProperties.class, SurgeProperties.class})
 public class MatchingTopology {
 
   @Bean
@@ -47,8 +52,14 @@ public class MatchingTopology {
   }
 
   @Bean
-  public Matcher matcher(DriverIndex index, MatchingProperties props, Clock clock) {
-    return new Matcher(index, props, clock);
+  public SurgeTracker surgeTracker(SurgeProperties props, MeterRegistry registry, Clock clock) {
+    return new SurgeTracker(props, registry, clock);
+  }
+
+  @Bean
+  public Matcher matcher(
+      DriverIndex index, MatchingProperties props, SurgeTracker surge, Clock clock) {
+    return new Matcher(index, props, surge, clock);
   }
 
   @Bean
@@ -58,13 +69,29 @@ public class MatchingTopology {
   }
 
   @Bean
-  public KStream<String, RideRequest> rideRequests(StreamsBuilder builder, MatchService service) {
+  public KStream<String, DriverPosition> driverPositions(
+      StreamsBuilder builder, SurgeTracker surge) {
+    KStream<String, DriverPosition> positions =
+        builder.stream(
+            Topics.DRIVER_POSITIONS,
+            Consumed.with(Serdes.String(), JsonSerde.of(DriverPosition.class)));
+    positions.foreach((city, p) -> surge.recordDriver(p), Named.as("surge-supply"));
+    return positions;
+  }
+
+  @Bean
+  public KStream<String, RideRequest> rideRequests(
+      StreamsBuilder builder, MatchService service, SurgeTracker surge) {
     KStream<String, RideRequest> requests =
         builder.stream(
             Topics.RIDE_REQUESTS, Consumed.with(Serdes.String(), JsonSerde.of(RideRequest.class)));
 
     KStream<String, MatchOutcome> outcomes =
-        requests.flatMapValues(service::handle, Named.as("match"));
+        requests
+            .peek(
+                (city, r) -> surge.recordRequest(r.cityId(), r.pickupLat(), r.pickupLng()),
+                Named.as("surge-demand"))
+            .flatMapValues(service::handle, Named.as("match"));
 
     outcomes
         .split(Named.as("outcome-"))

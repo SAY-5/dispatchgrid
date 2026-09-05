@@ -2,9 +2,9 @@ package io.dispatchgrid.common.geo;
 
 /**
  * Fixed-size grid cells over WGS84 coordinates. A cell id is "row:col" where row and col are the
- * integer counts of {@code cellMeters} north of the equator and east of the meridian at the
- * point's latitude, so two points fewer than {@code cellMeters} apart share a cell most of the
- * time and never sit more than two cells apart.
+ * integer counts of {@code cellMeters} north of the equator and east of the meridian at the point's
+ * latitude, so two points fewer than {@code cellMeters} apart share a cell most of the time and
+ * never sit more than two cells apart.
  */
 public final class GeoCell {
   private static final double METERS_PER_DEGREE_LAT = 111_320.0;
