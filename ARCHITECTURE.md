@@ -114,9 +114,9 @@ it in `surge_multiplier`, so a later price dispute can be traced to the demand t
 saw. `GET /pricing/{city}` exposes the grid; `dispatchgrid.surge.max` and
 `dispatchgrid.surge.cells` are gauges per city.
 
-Keeping the tracker in process is a deliberate tradeoff: each stream task only ever sees its own
-partitions, so with more than one matching pod every pod computes surge from a subset of the
-city's traffic. That is acceptable because records are keyed by city, which means a city's
-requests and driver positions land on the same partition number in both topics and are read by
-the same task; the signal is complete per city as long as both topics have the same partition
-count.
+Keeping the tracker in process is a deliberate tradeoff. Requests and positions are consumed by
+two separate sub-topologies, so with more than one matching pod a city's demand partition and its
+supply partition can be assigned to different instances, and each pod then prices from the half
+it sees. The demo accepts that (the load generator spreads both across all pods and `/pricing`
+is read behind the Service); the production version keeps the per-cell counters in a
+changelogged state store keyed by city so a task owns both sides, or in Redis next to the claims.
