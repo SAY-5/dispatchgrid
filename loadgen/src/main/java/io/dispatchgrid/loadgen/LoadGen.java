@@ -22,7 +22,7 @@ public final class LoadGen {
     Http http = new Http();
 
     waitForReady(http, opt);
-    JsonNode before = http.getJson(opt.matchingUrl() + "/matching/stats");
+    JsonNode before = http.getJsonWithRetry(opt.matchingUrl() + "/matching/stats", 5);
     long matched0 = before.get("matched").asLong();
     long unmatched0 = before.get("unmatched").asLong();
 
@@ -40,15 +40,24 @@ public final class LoadGen {
     for (int s = 1; s <= opt.durationSeconds(); s++) {
       Thread.sleep(1000);
       if (s % 10 == 0) {
-        JsonNode now = http.getJson(opt.matchingUrl() + "/matching/stats");
-        System.out.printf(
-            "  t=%3ds submitted=%d matched=%d unmatched=%d ride_errors=%d ping_errors=%d%n",
-            s,
-            rides.submitted.get(),
-            now.get("matched").asLong() - matched0,
-            now.get("unmatched").asLong() - unmatched0,
-            rides.errors.get(),
-            fleet.pingErrors.get());
+        // This read only prints a progress line. The measured counters are rides.errors and
+        // fleet.pingErrors, so a stats read that times out while a pod is being replaced must
+        // never end the run.
+        try {
+          JsonNode now = http.getJson(opt.matchingUrl() + "/matching/stats");
+          System.out.printf(
+              "  t=%3ds submitted=%d matched=%d unmatched=%d ride_errors=%d ping_errors=%d%n",
+              s,
+              rides.submitted.get(),
+              now.get("matched").asLong() - matched0,
+              now.get("unmatched").asLong() - unmatched0,
+              rides.errors.get(),
+              fleet.pingErrors.get());
+        } catch (IOException e) {
+          System.out.printf(
+              "  t=%3ds submitted=%d ride_errors=%d ping_errors=%d (stats read failed: %s)%n",
+              s, rides.submitted.get(), rides.errors.get(), fleet.pingErrors.get(), e.getMessage());
+        }
       }
     }
     rides.stop();
@@ -59,7 +68,7 @@ public final class LoadGen {
 
     long matched = stats.get("matched").asLong() - matched0;
     long unmatched = stats.get("unmatched").asLong() - unmatched0;
-    JsonNode shardStats = http.getJson(opt.riderUrl() + "/rides/stats");
+    JsonNode shardStats = http.getJsonWithRetry(opt.riderUrl() + "/rides/stats", 5);
     Map<String, Map<Integer, Long>> shards = shardDistribution(shardStats);
 
     Map<String, Object> summary = new LinkedHashMap<>();
@@ -117,7 +126,7 @@ public final class LoadGen {
   /** Keeps polling until every submitted ride has a decision or the settle window passes. */
   private static JsonNode settle(
       Http http, Options opt, long submitted, long matched0, long unmatched0) throws Exception {
-    JsonNode stats = http.getJson(opt.matchingUrl() + "/matching/stats");
+    JsonNode stats = http.getJsonWithRetry(opt.matchingUrl() + "/matching/stats", 5);
     for (int i = 0; i < opt.settleSeconds(); i++) {
       long decided =
           stats.get("matched").asLong() - matched0 + stats.get("unmatched").asLong() - unmatched0;
@@ -125,7 +134,7 @@ public final class LoadGen {
         break;
       }
       Thread.sleep(1000);
-      stats = http.getJson(opt.matchingUrl() + "/matching/stats");
+      stats = http.getJsonWithRetry(opt.matchingUrl() + "/matching/stats", 5);
     }
     return stats;
   }
