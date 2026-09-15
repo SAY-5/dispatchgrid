@@ -57,4 +57,23 @@ final class Http {
     }
     return JSON.readTree(res.body());
   }
+
+  /**
+   * Retries a read that the measurement depends on. A single attempt can time out while a pod is
+   * being replaced, which is exactly when this generator runs.
+   */
+  JsonNode getJsonWithRetry(String url, int attempts) throws IOException, InterruptedException {
+    IOException last = null;
+    for (int attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return getJson(url);
+      } catch (IOException e) {
+        last = e;
+        if (attempt < attempts) {
+          Thread.sleep(1000);
+        }
+      }
+    }
+    throw last;
+  }
 }

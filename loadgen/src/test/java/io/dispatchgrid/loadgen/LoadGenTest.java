@@ -3,7 +3,12 @@ package io.dispatchgrid.loadgen;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.sun.net.httpserver.HttpServer;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class LoadGenTest {
@@ -32,5 +37,28 @@ class LoadGenTest {
   void citiesMapToDistinctShardsUnderTwoShardModulus() {
     assertThat(City.first(2)).extracting(City::id).containsExactly(1, 2);
     assertThat(1 % 2).isNotEqualTo(2 % 2);
+  }
+
+  @Test
+  void retriesAReadThatFailsOnce() throws Exception {
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    AtomicInteger calls = new AtomicInteger();
+    server.createContext(
+        "/stats",
+        exchange -> {
+          byte[] body = "{\"matched\":3}".getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(calls.incrementAndGet() == 1 ? 500 : 200, body.length);
+          try (OutputStream out = exchange.getResponseBody()) {
+            out.write(body);
+          }
+        });
+    server.start();
+    try {
+      String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/stats";
+      assertThat(new Http().getJsonWithRetry(url, 3).get("matched").asInt()).isEqualTo(3);
+      assertThat(calls.get()).isEqualTo(2);
+    } finally {
+      server.stop(0);
+    }
   }
 }
