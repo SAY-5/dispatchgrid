@@ -40,6 +40,18 @@ class LoadGenTest {
   }
 
   @Test
+  void totalsDurableStatusesAcrossShardsAndCountsOnlyDecidedRows() throws Exception {
+    JsonNode stats =
+        Http.JSON.readTree(
+            "{\"shard-0\":{\"2:MATCHED\":10,\"2:REQUESTED\":3},"
+                + "\"shard-1\":{\"1:MATCHED\":7,\"1:UNMATCHED\":2}}");
+    assertThat(LoadGen.statusTotals(stats))
+        .containsExactly(
+            Map.entry("MATCHED", 17L), Map.entry("REQUESTED", 3L), Map.entry("UNMATCHED", 2L));
+    assertThat(LoadGen.decided(stats)).isEqualTo(19L);
+  }
+
+  @Test
   void retriesAReadThatFailsOnce() throws Exception {
     HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     AtomicInteger calls = new AtomicInteger();

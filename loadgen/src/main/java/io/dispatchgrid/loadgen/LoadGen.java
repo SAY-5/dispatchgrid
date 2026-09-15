@@ -63,7 +63,7 @@ public final class LoadGen {
     rides.stop();
     long runSeconds = Math.max(1, (System.nanoTime() - runStart) / 1_000_000_000L);
 
-    JsonNode stats = settle(http, opt, rides.submitted.get(), matched0, unmatched0);
+    JsonNode stats = settle(http, opt, rides.submitted.get());
     fleet.stop();
 
     long matched = stats.get("matched").asLong() - matched0;
@@ -93,6 +93,15 @@ public final class LoadGen {
             rides.byShard.entrySet().stream()
                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().get()))));
     summary.put("tripsByShard", shards);
+    Map<String, Long> byStatus = statusTotals(shardStats);
+    long durableTrips = byStatus.values().stream().mapToLong(Long::longValue).sum();
+    summary.put("tripsByStatus", byStatus);
+    summary.put("durableTrips", durableTrips);
+    summary.put("durableRequested", byStatus.getOrDefault("REQUESTED", 0L));
+    summary.put("durableDecided", durableTrips - byStatus.getOrDefault("REQUESTED", 0L));
+    summary.put(
+        "durableMatched",
+        byStatus.getOrDefault("MATCHED", 0L) + byStatus.getOrDefault("COMPLETED", 0L));
     Files.writeString(
         Path.of(opt.out()), Http.JSON.writerWithDefaultPrettyPrinter().writeValueAsString(summary));
 
@@ -123,20 +132,43 @@ public final class LoadGen {
     }
   }
 
-  /** Keeps polling until every submitted ride has a decision or the settle window passes. */
-  private static JsonNode settle(
-      Http http, Options opt, long submitted, long matched0, long unmatched0) throws Exception {
-    JsonNode stats = http.getJsonWithRetry(opt.matchingUrl() + "/matching/stats", 5);
+  /**
+   * Keeps polling until every submitted ride has a decision or the settle window passes. The
+   * decision count comes from the trip rows in the city shards rather than from the
+   * matching-service counters, which are in process and per pod and so are reset by a rolling
+   * update: polling those can never converge once a pod has been replaced.
+   */
+  private static JsonNode settle(Http http, Options opt, long submitted) throws Exception {
     for (int i = 0; i < opt.settleSeconds(); i++) {
-      long decided =
-          stats.get("matched").asLong() - matched0 + stats.get("unmatched").asLong() - unmatched0;
-      if (decided >= submitted) {
+      if (decided(http.getJsonWithRetry(opt.riderUrl() + "/rides/stats", 5)) >= submitted) {
         break;
       }
       Thread.sleep(1000);
-      stats = http.getJsonWithRetry(opt.matchingUrl() + "/matching/stats", 5);
     }
-    return stats;
+    return http.getJsonWithRetry(opt.matchingUrl() + "/matching/stats", 5);
+  }
+
+  /** Trip rows that are no longer REQUESTED, summed across shards. */
+  static long decided(JsonNode shardStats) {
+    Map<String, Long> byStatus = statusTotals(shardStats);
+    long total = byStatus.values().stream().mapToLong(Long::longValue).sum();
+    return total - byStatus.getOrDefault("REQUESTED", 0L);
+  }
+
+  /** Totals per durable trip status across every shard. */
+  static Map<String, Long> statusTotals(JsonNode shardStats) {
+    Map<String, Long> out = new TreeMap<>();
+    shardStats
+        .fields()
+        .forEachRemaining(
+            shard ->
+                shard
+                    .getValue()
+                    .fields()
+                    .forEachRemaining(
+                        e ->
+                            out.merge(e.getKey().split(":")[1], e.getValue().asLong(), Long::sum)));
+    return out;
   }
 
   /** Collapses "city:status" counts into trips per city per shard. */
@@ -193,8 +225,15 @@ public final class LoadGen {
     System.out.printf(
         "rides submitted     %d, http errors=%d, by shard %s%n",
         s.get("ridesSubmitted"), s.get("rideErrors"), s.get("submittedByShard"));
-    System.out.printf("matched             %d%n", s.get("matched"));
-    System.out.printf("unmatched           %d%n", s.get("unmatched"));
+    System.out.printf(
+        "decided (durable)   %d of %d trip rows, %d matched, %d still requested%n",
+        s.get("durableDecided"),
+        s.get("durableTrips"),
+        s.get("durableMatched"),
+        s.get("durableRequested"));
+    System.out.printf(
+        "matching counters   matched=%d unmatched=%d (in process, per pod, reset by a rollout)%n",
+        s.get("matched"), s.get("unmatched"));
     System.out.printf(
         "matches per minute  %d over the %d s run (matching-service trailing 60 s window: %d)%n",
         s.get("matchesPerMinuteRun"), runSeconds, s.get("matchesPerMinuteWindow"));
