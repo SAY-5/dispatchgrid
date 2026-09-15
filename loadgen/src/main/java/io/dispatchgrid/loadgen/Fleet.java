@@ -25,7 +25,15 @@ final class Fleet {
   private final String driverUrl;
   private final List<Driver> drivers = new ArrayList<>();
   private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
-  private final ScheduledExecutorService ticker = Executors.newSingleThreadScheduledExecutor();
+  // Daemon, so an unexpected failure on the main thread cannot leave this process alive with
+  // nothing driving it. Before this, a crash left the job running until activeDeadlineSeconds.
+  private final ScheduledExecutorService ticker =
+      Executors.newSingleThreadScheduledExecutor(
+          runnable -> {
+            Thread thread = new Thread(runnable, "loadgen-ticker");
+            thread.setDaemon(true);
+            return thread;
+          });
 
   private static final class Driver {
     final String id;
