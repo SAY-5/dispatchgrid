@@ -149,10 +149,13 @@ if s["pingErrors"] != 0:
     problems.append(f"driver ping http errors during rollout: {s['pingErrors']}")
 if s["ridesSubmitted"] == 0:
     problems.append("no rides submitted")
-if s["matched"] + s["unmatched"] < s["ridesSubmitted"]:
-    problems.append(f"undecided rides: {s['ridesSubmitted'] - s['matched'] - s['unmatched']}")
-if s["matched"] < 0.9 * s["ridesSubmitted"]:
-    problems.append(f"match rate too low: {s['matched']}/{s['ridesSubmitted']}")
+# The counters behind /matching/stats are in process and per pod, so a rolling update resets them
+# and one read sees only the pod that answered. Assert decisions from the trip rows in the city
+# shards, which survive pod replacement.
+if s["durableDecided"] < s["ridesSubmitted"]:
+    problems.append(f"undecided rides: {s['ridesSubmitted'] - s['durableDecided']} of {s['ridesSubmitted']}")
+if s["durableMatched"] < 0.9 * s["ridesSubmitted"]:
+    problems.append(f"match rate too low: {s['durableMatched']}/{s['ridesSubmitted']}")
 shards = s["tripsByShard"]
 for shard, cities in shards.items():
     if len(cities) != 1:
@@ -163,9 +166,10 @@ print(f"rollout duration        {roll}s, overlapping the {s['durationSeconds']}s
 print(f"ride requests           {s['ridesSubmitted']} submitted, {s['rideErrors']} http errors")
 print(f"driver position pings   {s['pingsOk']} ok, {s['pingErrors']} http errors")
 print(f"driver ping retries     {s.get('pingRetries', 0)} (idempotent upsert retried once on transport failure)")
-print(f"matched / unmatched     {s['matched']} / {s['unmatched']}")
-print(f"matches per minute      {s['matchesPerMinuteRun']} (run), {s['matchesPerMinuteWindow']} (trailing window)")
-print(f"match latency           p50={s['p50LatencyMs']}ms p95={s['p95LatencyMs']}ms p99={s['p99LatencyMs']}ms")
+print(f"rides decided           {s['durableDecided']} of {s['durableTrips']} trip rows, {s['durableMatched']} matched, {s['durableRequested']} still requested")
+print(f"matching counters       {s['matched']} matched / {s['unmatched']} unmatched (in process, per pod, reset by the rolling update)")
+print(f"matches per minute      {s['matchesPerMinuteRun']} (run), {s['matchesPerMinuteWindow']} (trailing window, answering pod only)")
+print(f"match latency           p50={s['p50LatencyMs']}ms p95={s['p95LatencyMs']}ms p99={s['p99LatencyMs']}ms (answering pod reservoir)")
 print(f"trips by shard          {json.dumps(shards)}")
 if problems:
     print("RESULT: FAIL")
