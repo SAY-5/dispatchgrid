@@ -105,9 +105,20 @@ log "rolling update finished in $((ROLL_END - ROLL_START))s"
 kubectl -n "$NS" get pods -l 'app in (rider-request-service,driver-location-service,matching-service)'
 
 log "waiting for the load generator to finish"
-if ! kubectl -n "$NS" wait --for=condition=complete job/loadgen --timeout=720s; then
-  fail "load generator job did not complete"
-fi
+LOADGEN_DEADLINE=$((SECONDS + 720))
+while :; do
+  CONDS=$(kubectl -n "$NS" get job loadgen -o jsonpath='{range .status.conditions[*]}{.type}={.status} {end}' 2>/dev/null || true)
+  case "$CONDS" in
+    *Complete=True*) break ;;
+    *Failed=True*)
+      TERM_REASON=$(kubectl -n "$NS" get pods -l app=loadgen \
+        -o jsonpath='{.items[*].status.containerStatuses[*].state.terminated.reason}' 2>/dev/null || true)
+      fail "load generator job failed ($CONDS terminated=${TERM_REASON:-unknown})"
+      ;;
+  esac
+  [ "$SECONDS" -lt "$LOADGEN_DEADLINE" ] || fail "load generator job did not finish within 720s"
+  sleep 5
+done
 
 kubectl -n "$NS" logs job/loadgen | sed -n '/== dispatchgrid load summary ==/,$p'
 SUMMARY=$(kubectl -n "$NS" logs job/loadgen | grep '^SUMMARY_JSON ' | tail -1 | sed 's/^SUMMARY_JSON //')
