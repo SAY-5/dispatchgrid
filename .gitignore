@@ -9,3 +9,4 @@ target/
 .env
 deploy/.kind-*
 loadgen-summary.json
+loadgen.log

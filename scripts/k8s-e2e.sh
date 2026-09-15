@@ -16,6 +16,10 @@ SKIP_BUILD="${SKIP_BUILD:-0}"
 MODULES="rider-request-service driver-location-service matching-service loadgen"
 SERVICES="rider-request-service driver-location-service matching-service"
 SUMMARY_FILE="${SUMMARY_FILE:-loadgen-summary.json}"
+# The job controller deletes the pod when the job fails, so kubectl logs has nothing left to
+# read by the time diagnostics run. Capture the output while the generator is alive.
+LOADGEN_LOG="${LOADGEN_LOG:-loadgen.log}"
+LOADGEN_LOG_PID=""
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 fail() { log "FAIL: $*"; dump; exit 1; }
@@ -27,10 +31,16 @@ dump() {
   for d in $SERVICES; do
     kubectl -n "$NS" logs deploy/"$d" --tail=60 --all-containers || true
   done
-  kubectl -n "$NS" logs job/loadgen --tail=80 || true
+  if [ -s "$LOADGEN_LOG" ]; then
+    log "--- load generator output captured during the run ---"
+    tail -80 "$LOADGEN_LOG" || true
+  else
+    kubectl -n "$NS" logs job/loadgen --tail=80 || true
+  fi
 }
 
 cleanup() {
+  if [ -n "$LOADGEN_LOG_PID" ]; then kill "$LOADGEN_LOG_PID" 2>/dev/null || true; fi
   if [ "$KEEP_CLUSTER" = "1" ]; then
     log "keeping cluster $CLUSTER (KEEP_CLUSTER=1)"
   else
@@ -87,6 +97,9 @@ for _ in $(seq 1 120); do
   sleep 2
 done
 kubectl -n "$NS" logs job/loadgen 2>/dev/null | grep -q "submitting" || fail "load generator never started submitting"
+
+kubectl -n "$NS" logs -f job/loadgen > "$LOADGEN_LOG" 2>&1 &
+LOADGEN_LOG_PID=$!
 
 log "load is running; sleeping ${ROLL_AFTER}s before the rolling update"
 sleep "$ROLL_AFTER"
