@@ -107,11 +107,14 @@ sleep "$ROLL_AFTER"
 MARKER="rollout-$(date +%s)"
 ROLL_START=$(date +%s)
 log "rolling update: ROLLOUT_MARKER=$MARKER on $SERVICES (maxUnavailable=0, maxSurge=1)"
+# One deployment at a time. Replacing all three at once puts nine service pods on the node
+# (two replicas plus one surge each), which on a small local VM starves them: pods restart and
+# the rollout never converges. Staged replacement keeps maxUnavailable=0 and maxSurge=1 per
+# deployment, keeps load flowing throughout, and only ever adds one extra pod.
 for d in $SERVICES; do
   kubectl -n "$NS" set env deploy/"$d" ROLLOUT_MARKER="$MARKER" >/dev/null
-done
-for d in $SERVICES; do
-  kubectl -n "$NS" rollout status deploy/"$d" --timeout=420s
+  kubectl -n "$NS" rollout status deploy/"$d" --timeout=420s \
+    || fail "rollout of $d did not converge within 420s"
 done
 ROLL_END=$(date +%s)
 log "rolling update finished in $((ROLL_END - ROLL_START))s"
