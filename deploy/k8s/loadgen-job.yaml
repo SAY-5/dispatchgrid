@@ -37,6 +37,9 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
-            limits:
               memory: 512Mi
+            limits:
+              # The generator runs one virtual thread per driver and per ride, and the JDK
+              # HTTP client holds per-connection buffers outside the heap, so 512Mi was not
+              # enough for 300 drivers per city: the container hit the limit and was killed.
+              memory: 1Gi

@@ -16,6 +16,10 @@ SKIP_BUILD="${SKIP_BUILD:-0}"
 MODULES="rider-request-service driver-location-service matching-service loadgen"
 SERVICES="rider-request-service driver-location-service matching-service"
 SUMMARY_FILE="${SUMMARY_FILE:-loadgen-summary.json}"
+# The job controller deletes the pod when the job fails, so kubectl logs has nothing left to
+# read by the time diagnostics run. Capture the output while the generator is alive.
+LOADGEN_LOG="${LOADGEN_LOG:-loadgen.log}"
+LOADGEN_LOG_PID=""
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 fail() { log "FAIL: $*"; dump; exit 1; }
@@ -27,10 +31,16 @@ dump() {
   for d in $SERVICES; do
     kubectl -n "$NS" logs deploy/"$d" --tail=60 --all-containers || true
   done
-  kubectl -n "$NS" logs job/loadgen --tail=80 || true
+  if [ -s "$LOADGEN_LOG" ]; then
+    log "--- load generator output captured during the run ---"
+    tail -80 "$LOADGEN_LOG" || true
+  else
+    kubectl -n "$NS" logs job/loadgen --tail=80 || true
+  fi
 }
 
 cleanup() {
+  if [ -n "$LOADGEN_LOG_PID" ]; then kill "$LOADGEN_LOG_PID" 2>/dev/null || true; fi
   if [ "$KEEP_CLUSTER" = "1" ]; then
     log "keeping cluster $CLUSTER (KEEP_CLUSTER=1)"
   else
@@ -88,26 +98,43 @@ for _ in $(seq 1 120); do
 done
 kubectl -n "$NS" logs job/loadgen 2>/dev/null | grep -q "submitting" || fail "load generator never started submitting"
 
+kubectl -n "$NS" logs -f job/loadgen > "$LOADGEN_LOG" 2>&1 &
+LOADGEN_LOG_PID=$!
+
 log "load is running; sleeping ${ROLL_AFTER}s before the rolling update"
 sleep "$ROLL_AFTER"
 
 MARKER="rollout-$(date +%s)"
 ROLL_START=$(date +%s)
 log "rolling update: ROLLOUT_MARKER=$MARKER on $SERVICES (maxUnavailable=0, maxSurge=1)"
+# One deployment at a time. Replacing all three at once puts nine service pods on the node
+# (two replicas plus one surge each), which on a small local VM starves them: pods restart and
+# the rollout never converges. Staged replacement keeps maxUnavailable=0 and maxSurge=1 per
+# deployment, keeps load flowing throughout, and only ever adds one extra pod.
 for d in $SERVICES; do
   kubectl -n "$NS" set env deploy/"$d" ROLLOUT_MARKER="$MARKER" >/dev/null
-done
-for d in $SERVICES; do
-  kubectl -n "$NS" rollout status deploy/"$d" --timeout=420s
+  kubectl -n "$NS" rollout status deploy/"$d" --timeout=420s \
+    || fail "rollout of $d did not converge within 420s"
 done
 ROLL_END=$(date +%s)
 log "rolling update finished in $((ROLL_END - ROLL_START))s"
 kubectl -n "$NS" get pods -l 'app in (rider-request-service,driver-location-service,matching-service)'
 
 log "waiting for the load generator to finish"
-if ! kubectl -n "$NS" wait --for=condition=complete job/loadgen --timeout=720s; then
-  fail "load generator job did not complete"
-fi
+LOADGEN_DEADLINE=$((SECONDS + 720))
+while :; do
+  CONDS=$(kubectl -n "$NS" get job loadgen -o jsonpath='{range .status.conditions[*]}{.type}={.status} {end}' 2>/dev/null || true)
+  case "$CONDS" in
+    *Complete=True*) break ;;
+    *Failed=True*)
+      TERM_REASON=$(kubectl -n "$NS" get pods -l app=loadgen \
+        -o jsonpath='{.items[*].status.containerStatuses[*].state.terminated.reason}' 2>/dev/null || true)
+      fail "load generator job failed ($CONDS terminated=${TERM_REASON:-unknown})"
+      ;;
+  esac
+  [ "$SECONDS" -lt "$LOADGEN_DEADLINE" ] || fail "load generator job did not finish within 720s"
+  sleep 5
+done
 
 kubectl -n "$NS" logs job/loadgen | sed -n '/== dispatchgrid load summary ==/,$p'
 SUMMARY=$(kubectl -n "$NS" logs job/loadgen | grep '^SUMMARY_JSON ' | tail -1 | sed 's/^SUMMARY_JSON //')
@@ -125,10 +152,15 @@ if s["pingErrors"] != 0:
     problems.append(f"driver ping http errors during rollout: {s['pingErrors']}")
 if s["ridesSubmitted"] == 0:
     problems.append("no rides submitted")
-if s["matched"] + s["unmatched"] < s["ridesSubmitted"]:
-    problems.append(f"undecided rides: {s['ridesSubmitted'] - s['matched'] - s['unmatched']}")
-if s["matched"] < 0.9 * s["ridesSubmitted"]:
-    problems.append(f"match rate too low: {s['matched']}/{s['ridesSubmitted']}")
+# The counters behind /matching/stats are in process and per pod, so a rolling update resets them
+# and one read sees only the pod that answered. Assert decisions from the trip rows in the city
+# shards, which survive pod replacement.
+if s["durableDecided"] < s["ridesSubmitted"]:
+    problems.append(f"undecided rides: {s['ridesSubmitted'] - s['durableDecided']} of {s['ridesSubmitted']}")
+if s["durableTrips"] > s["ridesSubmitted"]:
+    problems.append(f"trip rows beyond submissions: {s['durableTrips'] - s['ridesSubmitted']} (a retried ride whose first attempt had been stored)")
+if s["durableMatched"] < 0.9 * s["ridesSubmitted"]:
+    problems.append(f"match rate too low: {s['durableMatched']}/{s['ridesSubmitted']}")
 shards = s["tripsByShard"]
 for shard, cities in shards.items():
     if len(cities) != 1:
@@ -139,9 +171,12 @@ print(f"rollout duration        {roll}s, overlapping the {s['durationSeconds']}s
 print(f"ride requests           {s['ridesSubmitted']} submitted, {s['rideErrors']} http errors")
 print(f"driver position pings   {s['pingsOk']} ok, {s['pingErrors']} http errors")
 print(f"driver ping retries     {s.get('pingRetries', 0)} (idempotent upsert retried once on transport failure)")
-print(f"matched / unmatched     {s['matched']} / {s['unmatched']}")
-print(f"matches per minute      {s['matchesPerMinuteRun']} (run), {s['matchesPerMinuteWindow']} (trailing window)")
-print(f"match latency           p50={s['p50LatencyMs']}ms p95={s['p95LatencyMs']}ms p99={s['p99LatencyMs']}ms")
+print(f"ride retries            {s.get('rideRetries', 0)} (retried once on transport failure; a stored first attempt would show as a trip row beyond submissions)")
+print(f"sends skipped           {s.get('ridesSkipped', 0)} rides, {s.get('pingsSkipped', 0)} driver pings (in-flight bound reached; skipped and counted, not queued, not http errors)")
+print(f"rides decided           {s['durableDecided']} of {s['durableTrips']} trip rows, {s['durableMatched']} matched, {s['durableRequested']} still requested")
+print(f"matching counters       {s['matched']} matched / {s['unmatched']} unmatched (in process, per pod, reset by the rolling update)")
+print(f"matches per minute      {s['matchesPerMinuteRun']} (run), {s['matchesPerMinuteWindow']} (trailing window, answering pod only)")
+print(f"match latency           p50={s['p50LatencyMs']}ms p95={s['p95LatencyMs']}ms p99={s['p99LatencyMs']}ms (answering pod reservoir)")
 print(f"trips by shard          {json.dumps(shards)}")
 if problems:
     print("RESULT: FAIL")

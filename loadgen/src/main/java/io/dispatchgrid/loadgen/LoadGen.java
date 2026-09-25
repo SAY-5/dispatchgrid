@@ -22,7 +22,7 @@ public final class LoadGen {
     Http http = new Http();
 
     waitForReady(http, opt);
-    JsonNode before = http.getJson(opt.matchingUrl() + "/matching/stats");
+    JsonNode before = http.getJsonWithRetry(opt.matchingUrl() + "/matching/stats", 5);
     long matched0 = before.get("matched").asLong();
     long unmatched0 = before.get("unmatched").asLong();
 
@@ -40,26 +40,51 @@ public final class LoadGen {
     for (int s = 1; s <= opt.durationSeconds(); s++) {
       Thread.sleep(1000);
       if (s % 10 == 0) {
-        JsonNode now = http.getJson(opt.matchingUrl() + "/matching/stats");
-        System.out.printf(
-            "  t=%3ds submitted=%d matched=%d unmatched=%d ride_errors=%d ping_errors=%d%n",
-            s,
-            rides.submitted.get(),
-            now.get("matched").asLong() - matched0,
-            now.get("unmatched").asLong() - unmatched0,
-            rides.errors.get(),
-            fleet.pingErrors.get());
+        // This read only prints a progress line. The measured counters are rides.errors and
+        // fleet.pingErrors, so a stats read that times out while a pod is being replaced must
+        // never end the run. Like every other read it is issued from this thread and waited on
+        // before the next, so at most one read is ever in flight.
+        try {
+          JsonNode now = http.getJson(opt.matchingUrl() + "/matching/stats");
+          System.out.printf(
+              "  t=%3ds submitted=%d matched=%d unmatched=%d ride_errors=%d ping_errors=%d"
+                  + " rides_skipped=%d pings_skipped=%d rides_in_flight=%d pings_in_flight=%d%n",
+              s,
+              rides.submitted.get(),
+              now.get("matched").asLong() - matched0,
+              now.get("unmatched").asLong() - unmatched0,
+              rides.errors.get(),
+              fleet.pingErrors.get(),
+              rides.skipped.get(),
+              fleet.pingsSkipped.get(),
+              rides.inFlight(),
+              fleet.inFlight());
+        } catch (IOException e) {
+          System.out.printf(
+              "  t=%3ds submitted=%d ride_errors=%d ping_errors=%d rides_skipped=%d"
+                  + " pings_skipped=%d rides_in_flight=%d pings_in_flight=%d"
+                  + " (stats read failed: %s)%n",
+              s,
+              rides.submitted.get(),
+              rides.errors.get(),
+              fleet.pingErrors.get(),
+              rides.skipped.get(),
+              fleet.pingsSkipped.get(),
+              rides.inFlight(),
+              fleet.inFlight(),
+              e.getMessage());
+        }
       }
     }
     rides.stop();
     long runSeconds = Math.max(1, (System.nanoTime() - runStart) / 1_000_000_000L);
 
-    JsonNode stats = settle(http, opt, rides.submitted.get(), matched0, unmatched0);
+    JsonNode stats = settle(http, opt, rides.submitted.get());
     fleet.stop();
 
     long matched = stats.get("matched").asLong() - matched0;
     long unmatched = stats.get("unmatched").asLong() - unmatched0;
-    JsonNode shardStats = http.getJson(opt.riderUrl() + "/rides/stats");
+    JsonNode shardStats = http.getJsonWithRetry(opt.riderUrl() + "/rides/stats", 5);
     Map<String, Map<Integer, Long>> shards = shardDistribution(shardStats);
 
     Map<String, Object> summary = new LinkedHashMap<>();
@@ -69,8 +94,11 @@ public final class LoadGen {
     summary.put("pingsOk", fleet.pingsOk.get());
     summary.put("pingErrors", fleet.pingErrors.get());
     summary.put("pingRetries", fleet.pingRetries.get());
+    summary.put("pingsSkipped", fleet.pingsSkipped.get());
     summary.put("ridesSubmitted", rides.submitted.get());
     summary.put("rideErrors", rides.errors.get());
+    summary.put("rideRetries", rides.retries.get());
+    summary.put("ridesSkipped", rides.skipped.get());
     summary.put("matched", matched);
     summary.put("unmatched", unmatched);
     summary.put("matchesPerMinuteRun", Math.round(matched * 60.0 / runSeconds));
@@ -84,6 +112,15 @@ public final class LoadGen {
             rides.byShard.entrySet().stream()
                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().get()))));
     summary.put("tripsByShard", shards);
+    Map<String, Long> byStatus = statusTotals(shardStats);
+    long durableTrips = byStatus.values().stream().mapToLong(Long::longValue).sum();
+    summary.put("tripsByStatus", byStatus);
+    summary.put("durableTrips", durableTrips);
+    summary.put("durableRequested", byStatus.getOrDefault("REQUESTED", 0L));
+    summary.put("durableDecided", durableTrips - byStatus.getOrDefault("REQUESTED", 0L));
+    summary.put(
+        "durableMatched",
+        byStatus.getOrDefault("MATCHED", 0L) + byStatus.getOrDefault("COMPLETED", 0L));
     Files.writeString(
         Path.of(opt.out()), Http.JSON.writerWithDefaultPrettyPrinter().writeValueAsString(summary));
 
@@ -114,20 +151,43 @@ public final class LoadGen {
     }
   }
 
-  /** Keeps polling until every submitted ride has a decision or the settle window passes. */
-  private static JsonNode settle(
-      Http http, Options opt, long submitted, long matched0, long unmatched0) throws Exception {
-    JsonNode stats = http.getJson(opt.matchingUrl() + "/matching/stats");
+  /**
+   * Keeps polling until every submitted ride has a decision or the settle window passes. The
+   * decision count comes from the trip rows in the city shards rather than from the
+   * matching-service counters, which are in process and per pod and so are reset by a rolling
+   * update: polling those can never converge once a pod has been replaced.
+   */
+  private static JsonNode settle(Http http, Options opt, long submitted) throws Exception {
     for (int i = 0; i < opt.settleSeconds(); i++) {
-      long decided =
-          stats.get("matched").asLong() - matched0 + stats.get("unmatched").asLong() - unmatched0;
-      if (decided >= submitted) {
+      if (decided(http.getJsonWithRetry(opt.riderUrl() + "/rides/stats", 5)) >= submitted) {
         break;
       }
       Thread.sleep(1000);
-      stats = http.getJson(opt.matchingUrl() + "/matching/stats");
     }
-    return stats;
+    return http.getJsonWithRetry(opt.matchingUrl() + "/matching/stats", 5);
+  }
+
+  /** Trip rows that are no longer REQUESTED, summed across shards. */
+  static long decided(JsonNode shardStats) {
+    Map<String, Long> byStatus = statusTotals(shardStats);
+    long total = byStatus.values().stream().mapToLong(Long::longValue).sum();
+    return total - byStatus.getOrDefault("REQUESTED", 0L);
+  }
+
+  /** Totals per durable trip status across every shard. */
+  static Map<String, Long> statusTotals(JsonNode shardStats) {
+    Map<String, Long> out = new TreeMap<>();
+    shardStats
+        .fields()
+        .forEachRemaining(
+            shard ->
+                shard
+                    .getValue()
+                    .fields()
+                    .forEachRemaining(
+                        e ->
+                            out.merge(e.getKey().split(":")[1], e.getValue().asLong(), Long::sum)));
+    return out;
   }
 
   /** Collapses "city:status" counts into trips per city per shard. */
@@ -175,17 +235,33 @@ public final class LoadGen {
         "run                 %d s at %d rides/s, cities %s%n",
         opt.durationSeconds(), opt.ridesPerSecond(), cityNames);
     System.out.printf(
-        "drivers             %d (%d per city), pings ok=%d errors=%d retries=%d%n",
+        "drivers             %d (%d per city), pings ok=%d errors=%d retries=%d skipped=%d%n",
         s.get("drivers"),
         opt.driversPerCity(),
         s.get("pingsOk"),
         s.get("pingErrors"),
-        s.get("pingRetries"));
+        s.get("pingRetries"),
+        s.get("pingsSkipped"));
     System.out.printf(
-        "rides submitted     %d, http errors=%d, by shard %s%n",
-        s.get("ridesSubmitted"), s.get("rideErrors"), s.get("submittedByShard"));
-    System.out.printf("matched             %d%n", s.get("matched"));
-    System.out.printf("unmatched           %d%n", s.get("unmatched"));
+        "rides submitted     %d, http errors=%d, retries=%d, skipped=%d, by shard %s%n",
+        s.get("ridesSubmitted"),
+        s.get("rideErrors"),
+        s.get("rideRetries"),
+        s.get("ridesSkipped"),
+        s.get("submittedByShard"));
+    System.out.printf(
+        "in-flight bound     %d pings, %d rides; a send past the bound is skipped and counted, not"
+            + " queued, and is not an http error%n",
+        Fleet.MAX_IN_FLIGHT_PINGS, Rides.MAX_IN_FLIGHT_RIDES);
+    System.out.printf(
+        "decided (durable)   %d of %d trip rows, %d matched, %d still requested%n",
+        s.get("durableDecided"),
+        s.get("durableTrips"),
+        s.get("durableMatched"),
+        s.get("durableRequested"));
+    System.out.printf(
+        "matching counters   matched=%d unmatched=%d (in process, per pod, reset by a rollout)%n",
+        s.get("matched"), s.get("unmatched"));
     System.out.printf(
         "matches per minute  %d over the %d s run (matching-service trailing 60 s window: %d)%n",
         s.get("matchesPerMinuteRun"), runSeconds, s.get("matchesPerMinuteWindow"));
