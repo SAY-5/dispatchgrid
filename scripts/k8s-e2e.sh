@@ -169,6 +169,7 @@ print(f"rollout duration        {roll}s, overlapping the {s['durationSeconds']}s
 print(f"ride requests           {s['ridesSubmitted']} submitted, {s['rideErrors']} http errors")
 print(f"driver position pings   {s['pingsOk']} ok, {s['pingErrors']} http errors")
 print(f"driver ping retries     {s.get('pingRetries', 0)} (idempotent upsert retried once on transport failure)")
+print(f"sends skipped           {s.get('ridesSkipped', 0)} rides, {s.get('pingsSkipped', 0)} driver pings (in-flight bound reached; skipped and counted, not queued, not http errors)")
 print(f"rides decided           {s['durableDecided']} of {s['durableTrips']} trip rows, {s['durableMatched']} matched, {s['durableRequested']} still requested")
 print(f"matching counters       {s['matched']} matched / {s['unmatched']} unmatched (in process, per pod, reset by the rolling update)")
 print(f"matches per minute      {s['matchesPerMinuteRun']} (run), {s['matchesPerMinuteWindow']} (trailing window, answering pod only)")

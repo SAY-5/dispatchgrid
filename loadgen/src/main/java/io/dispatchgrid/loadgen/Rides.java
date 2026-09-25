@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.random.RandomGenerator;
@@ -15,8 +16,22 @@ import java.util.random.RandomGenerator;
 final class Rides {
   private static final double PICKUP_RADIUS_M = 4000;
 
+  /**
+   * Design constant: the most ride submissions held in flight at once. The default workload submits
+   * 10 rides a second and a submission is held for at most the 10 second request timeout, so 100 is
+   * the whole offered load with every request stalled to its timeout. Each ride is a distinct rider
+   * rather than a refresh that the next tick repeats, so the bound is set at the full load and only
+   * trips when a submission hangs past its timeout (the timeout covers the response headers, not a
+   * stalled body): a skip marks a hung submission, not a slow one.
+   */
+  static final int MAX_IN_FLIGHT_RIDES = 100;
+
   final AtomicLong submitted = new AtomicLong();
   final AtomicLong errors = new AtomicLong();
+
+  /** Rides not sent because the in-flight bound was already reached when their tick ran. */
+  final AtomicLong skipped = new AtomicLong();
+
   final Map<String, AtomicLong> byShard = new ConcurrentHashMap<>();
   final Map<Integer, AtomicLong> byCity = new ConcurrentHashMap<>();
 
@@ -24,6 +39,8 @@ final class Rides {
   private final String riderUrl;
   private final List<City> cities;
   private final RandomGenerator rnd;
+  private final int maxInFlight;
+  private final Semaphore permits;
   private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
   // Daemon, so an unexpected failure on the main thread cannot leave this process alive with
   // nothing driving it. Before this, a crash left the job running until activeDeadlineSeconds.
@@ -37,23 +54,47 @@ final class Rides {
   private long counter;
 
   Rides(Http http, String riderUrl, List<City> cities, long seed) {
+    this(http, riderUrl, cities, seed, MAX_IN_FLIGHT_RIDES);
+  }
+
+  Rides(Http http, String riderUrl, List<City> cities, long seed, int maxInFlight) {
     this.http = http;
     this.riderUrl = riderUrl;
     this.cities = cities;
     this.rnd = new java.util.Random(seed);
+    this.maxInFlight = maxInFlight;
+    this.permits = new Semaphore(maxInFlight);
   }
 
   void start(int perSecond) {
     long periodMicros = 1_000_000L / perSecond;
-    ticker.scheduleAtFixedRate(
+    ticker.scheduleAtFixedRate(this::tick, 0, periodMicros, TimeUnit.MICROSECONDS);
+  }
+
+  /** Submissions in flight right now. */
+  int inFlight() {
+    return maxInFlight - permits.availablePermits();
+  }
+
+  /**
+   * One ride for the next city in round-robin order. If the bound is reached the ride is skipped
+   * and counted rather than queued, so a stalled target cannot grow the set of live requests.
+   */
+  void tick() {
+    City c = cities.get((int) (counter++ % cities.size()));
+    if (!permits.tryAcquire()) {
+      skipped.incrementAndGet();
+      return;
+    }
+    Map<String, Object> body = nextRequest(c);
+    workers.submit(
         () -> {
-          City c = cities.get((int) (counter++ % cities.size()));
-          Map<String, Object> body = nextRequest(c);
-          workers.submit(() -> submit(body));
-        },
-        0,
-        periodMicros,
-        TimeUnit.MICROSECONDS);
+          try {
+            submit(body);
+          } finally {
+            permits.release();
+          }
+        });
   }
 
   private Map<String, Object> nextRequest(City c) {

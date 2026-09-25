@@ -42,21 +42,37 @@ public final class LoadGen {
       if (s % 10 == 0) {
         // This read only prints a progress line. The measured counters are rides.errors and
         // fleet.pingErrors, so a stats read that times out while a pod is being replaced must
-        // never end the run.
+        // never end the run. Like every other read it is issued from this thread and waited on
+        // before the next, so at most one read is ever in flight.
         try {
           JsonNode now = http.getJson(opt.matchingUrl() + "/matching/stats");
           System.out.printf(
-              "  t=%3ds submitted=%d matched=%d unmatched=%d ride_errors=%d ping_errors=%d%n",
+              "  t=%3ds submitted=%d matched=%d unmatched=%d ride_errors=%d ping_errors=%d"
+                  + " rides_skipped=%d pings_skipped=%d rides_in_flight=%d pings_in_flight=%d%n",
               s,
               rides.submitted.get(),
               now.get("matched").asLong() - matched0,
               now.get("unmatched").asLong() - unmatched0,
               rides.errors.get(),
-              fleet.pingErrors.get());
+              fleet.pingErrors.get(),
+              rides.skipped.get(),
+              fleet.pingsSkipped.get(),
+              rides.inFlight(),
+              fleet.inFlight());
         } catch (IOException e) {
           System.out.printf(
-              "  t=%3ds submitted=%d ride_errors=%d ping_errors=%d (stats read failed: %s)%n",
-              s, rides.submitted.get(), rides.errors.get(), fleet.pingErrors.get(), e.getMessage());
+              "  t=%3ds submitted=%d ride_errors=%d ping_errors=%d rides_skipped=%d"
+                  + " pings_skipped=%d rides_in_flight=%d pings_in_flight=%d"
+                  + " (stats read failed: %s)%n",
+              s,
+              rides.submitted.get(),
+              rides.errors.get(),
+              fleet.pingErrors.get(),
+              rides.skipped.get(),
+              fleet.pingsSkipped.get(),
+              rides.inFlight(),
+              fleet.inFlight(),
+              e.getMessage());
         }
       }
     }
@@ -78,8 +94,10 @@ public final class LoadGen {
     summary.put("pingsOk", fleet.pingsOk.get());
     summary.put("pingErrors", fleet.pingErrors.get());
     summary.put("pingRetries", fleet.pingRetries.get());
+    summary.put("pingsSkipped", fleet.pingsSkipped.get());
     summary.put("ridesSubmitted", rides.submitted.get());
     summary.put("rideErrors", rides.errors.get());
+    summary.put("ridesSkipped", rides.skipped.get());
     summary.put("matched", matched);
     summary.put("unmatched", unmatched);
     summary.put("matchesPerMinuteRun", Math.round(matched * 60.0 / runSeconds));
@@ -216,15 +234,23 @@ public final class LoadGen {
         "run                 %d s at %d rides/s, cities %s%n",
         opt.durationSeconds(), opt.ridesPerSecond(), cityNames);
     System.out.printf(
-        "drivers             %d (%d per city), pings ok=%d errors=%d retries=%d%n",
+        "drivers             %d (%d per city), pings ok=%d errors=%d retries=%d skipped=%d%n",
         s.get("drivers"),
         opt.driversPerCity(),
         s.get("pingsOk"),
         s.get("pingErrors"),
-        s.get("pingRetries"));
+        s.get("pingRetries"),
+        s.get("pingsSkipped"));
     System.out.printf(
-        "rides submitted     %d, http errors=%d, by shard %s%n",
-        s.get("ridesSubmitted"), s.get("rideErrors"), s.get("submittedByShard"));
+        "rides submitted     %d, http errors=%d, skipped=%d, by shard %s%n",
+        s.get("ridesSubmitted"),
+        s.get("rideErrors"),
+        s.get("ridesSkipped"),
+        s.get("submittedByShard"));
+    System.out.printf(
+        "in-flight bound     %d pings, %d rides; a send past the bound is skipped and counted, not"
+            + " queued, and is not an http error%n",
+        Fleet.MAX_IN_FLIGHT_PINGS, Rides.MAX_IN_FLIGHT_RIDES);
     System.out.printf(
         "decided (durable)   %d of %d trip rows, %d matched, %d still requested%n",
         s.get("durableDecided"),
