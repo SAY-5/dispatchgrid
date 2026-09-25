@@ -13,6 +13,17 @@ import java.util.concurrent.Executors;
 /** Thin JSON client on java.net.http with a virtual-thread executor. */
 final class Http {
   static final ObjectMapper JSON = new ObjectMapper();
+
+  /** The server answered with a non-2xx status; distinct from a transport failure. */
+  static final class StatusException extends IOException {
+    final int status;
+
+    StatusException(int status, String url) {
+      super("HTTP " + status + " from " + url);
+      this.status = status;
+    }
+  }
+
   private final HttpClient client;
 
   Http() {
@@ -43,7 +54,7 @@ final class Http {
             .build();
     HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
     if (res.statusCode() / 100 != 2) {
-      throw new IOException("HTTP " + res.statusCode() + " from " + url);
+      throw new StatusException(res.statusCode(), url);
     }
     return JSON.readTree(res.body());
   }
@@ -53,7 +64,7 @@ final class Http {
         HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(10)).GET().build();
     HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
     if (res.statusCode() / 100 != 2) {
-      throw new IOException("HTTP " + res.statusCode() + " from " + url);
+      throw new StatusException(res.statusCode(), url);
     }
     return JSON.readTree(res.body());
   }

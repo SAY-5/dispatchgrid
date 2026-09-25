@@ -141,6 +141,67 @@ class LoadGenTest {
     }
   }
 
+  @Test
+  void retriesARideOnceWhenTheConnectionClosesWithoutAResponse() throws Exception {
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    AtomicInteger calls = new AtomicInteger();
+    server.createContext(
+        "/rides",
+        exchange -> {
+          if (calls.incrementAndGet() == 1) {
+            exchange.close();
+            return;
+          }
+          byte[] body = "{\"shard\":0,\"cityId\":1}".getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, body.length);
+          try (OutputStream out = exchange.getResponseBody()) {
+            out.write(body);
+          }
+        });
+    server.start();
+    try {
+      Rides rides =
+          new Rides(
+              new Http(), "http://127.0.0.1:" + server.getAddress().getPort(), City.first(1), 7);
+      rides.tick();
+      waitUntil(() -> rides.submitted.get() + rides.errors.get() == 1);
+      assertThat(rides.submitted.get()).isEqualTo(1);
+      assertThat(rides.retries.get()).isEqualTo(1);
+      assertThat(rides.errors.get()).isZero();
+      assertThat(calls.get()).isEqualTo(2);
+      rides.stop();
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void countsAnErrorStatusWithoutRetrying() throws Exception {
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    AtomicInteger calls = new AtomicInteger();
+    server.createContext(
+        "/rides",
+        exchange -> {
+          calls.incrementAndGet();
+          exchange.sendResponseHeaders(503, -1);
+          exchange.close();
+        });
+    server.start();
+    try {
+      Rides rides =
+          new Rides(
+              new Http(), "http://127.0.0.1:" + server.getAddress().getPort(), City.first(1), 7);
+      rides.tick();
+      waitUntil(() -> rides.errors.get() == 1);
+      assertThat(rides.retries.get()).isZero();
+      assertThat(rides.submitted.get()).isZero();
+      assertThat(calls.get()).isEqualTo(1);
+      rides.stop();
+    } finally {
+      server.stop(0);
+    }
+  }
+
   /** Answers each request with 200 and the given body once a permit is released. */
   private static HttpServer stallingServer(
       String path, Semaphore answer, AtomicInteger arrived, String reply) throws IOException {

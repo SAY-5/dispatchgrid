@@ -97,6 +97,7 @@ public final class LoadGen {
     summary.put("pingsSkipped", fleet.pingsSkipped.get());
     summary.put("ridesSubmitted", rides.submitted.get());
     summary.put("rideErrors", rides.errors.get());
+    summary.put("rideRetries", rides.retries.get());
     summary.put("ridesSkipped", rides.skipped.get());
     summary.put("matched", matched);
     summary.put("unmatched", unmatched);
@@ -242,9 +243,10 @@ public final class LoadGen {
         s.get("pingRetries"),
         s.get("pingsSkipped"));
     System.out.printf(
-        "rides submitted     %d, http errors=%d, skipped=%d, by shard %s%n",
+        "rides submitted     %d, http errors=%d, retries=%d, skipped=%d, by shard %s%n",
         s.get("ridesSubmitted"),
         s.get("rideErrors"),
+        s.get("rideRetries"),
         s.get("ridesSkipped"),
         s.get("submittedByShard"));
     System.out.printf(

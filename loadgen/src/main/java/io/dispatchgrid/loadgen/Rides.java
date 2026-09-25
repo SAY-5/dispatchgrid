@@ -1,6 +1,7 @@
 package io.dispatchgrid.loadgen;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,6 +29,9 @@ final class Rides {
 
   final AtomicLong submitted = new AtomicLong();
   final AtomicLong errors = new AtomicLong();
+
+  /** Submissions sent a second time after a transport failure on the first attempt. */
+  final AtomicLong retries = new AtomicLong();
 
   /** Rides not sent because the in-flight bound was already reached when their tick ran. */
   final AtomicLong skipped = new AtomicLong();
@@ -114,15 +118,38 @@ final class Rides {
   }
 
   private void submit(Map<String, Object> body) {
+    String url = riderUrl + "/rides";
     try {
-      JsonNode res = http.postJsonForBody(riderUrl + "/rides", body);
-      submitted.incrementAndGet();
-      byShard
-          .computeIfAbsent("shard-" + res.get("shard").asInt(), k -> new AtomicLong())
-          .incrementAndGet();
-      byCity.computeIfAbsent(res.get("cityId").asInt(), k -> new AtomicLong()).incrementAndGet();
+      record(http.postJsonForBody(url, body));
+    } catch (Http.StatusException status) {
+      fail(status);
+    } catch (IOException first) {
+      // A transport failure with no response, which is what a keep-alive connection produces when
+      // the pod behind it stops during a rollout. One retry on a fresh connection, the way the
+      // pings do, counted separately. A ride the first attempt had stored anyway shows up as a
+      // trip row beyond the submitted count, which the e2e evidence checks.
+      retries.incrementAndGet();
+      try {
+        record(http.postJsonForBody(url, body));
+      } catch (Exception second) {
+        fail(second);
+      }
     } catch (Exception e) {
-      errors.incrementAndGet();
+      fail(e);
+    }
+  }
+
+  private void record(JsonNode res) {
+    submitted.incrementAndGet();
+    byShard
+        .computeIfAbsent("shard-" + res.get("shard").asInt(), k -> new AtomicLong())
+        .incrementAndGet();
+    byCity.computeIfAbsent(res.get("cityId").asInt(), k -> new AtomicLong()).incrementAndGet();
+  }
+
+  private void fail(Exception e) {
+    if (errors.incrementAndGet() <= 10) {
+      System.err.println("ride error: " + e);
     }
   }
 
