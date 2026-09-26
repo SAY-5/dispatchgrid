@@ -52,7 +52,9 @@ make k8s-e2e    # kind cluster, deploy, load, rolling update with zero request e
 `make demo` brings up Redpanda, two MySQL 8 shards, Redis 7, and the three services, then runs
 the load generator. The compose file caps every JVM at 160 MB heap and MySQL at a 32 MB buffer
 pool so the whole stack fits in a 2 GiB Docker VM; set `JAVA_OPTS` to lift the cap. The run is: 300 simulated drivers per city across two cities pinging their position every
-second, and ride requests at 10 per second for 60 seconds. The output of a run looks like this:
+second, and ride requests at 10 per second for 60 seconds. The output of the run captured at
+commit ae5dba8 on 2026-09-03 looked like this; the summary printed today also carries retry,
+skipped and durable decision fields, in the format the rollout evidence below shows:
 
 <!-- demo-summary:start -->
 ```
@@ -146,24 +148,31 @@ manifests, waits for readiness, starts the load generator as an in-cluster Job, 
 and pings are flowing changes an environment variable on all three Deployments to trigger a
 rolling update. The script then asserts that the generator recorded zero HTTP errors, that every
 ride got a decision, and that each shard holds exactly one city. CI runs this on every push.
+The block below is the output of the CI run named on its first line; totals differ a little
+between runs (this one submitted 606 rides in 60 s) and the latency line is the reservoir of
+whichever matching pod answered the stats read on that runner.
 
 <!-- rollout-evidence:start -->
 ```
-$ make k8s-e2e
-[..] rolling update: ROLLOUT_MARKER=rollout-<ts> on rider-request-service driver-location-service matching-service (maxUnavailable=0, maxSurge=1)
+$ ./scripts/k8s-e2e.sh    # GitHub Actions ubuntu-latest (2 vCPU), run 36201543211, commit 20ce8c4, 2026-09-25
+[23:40:47] rolling update: ROLLOUT_MARKER=rollout-1790379647 on rider-request-service driver-location-service matching-service (maxUnavailable=0, maxSurge=1)
 deployment "rider-request-service" successfully rolled out
 deployment "driver-location-service" successfully rolled out
 deployment "matching-service" successfully rolled out
-[..] rolling update finished in <n>s
+[23:42:23] rolling update finished in 96s
 
 == rolling update evidence ==
-rollout duration        <n>s, overlapping the 60s load run
-ride requests           <n> submitted, 0 http errors
-driver position pings   <n> ok, 0 http errors
-matched / unmatched     <n> / <n>
-matches per minute      <n> (run), <n> (trailing window)
-match latency           p50=<n>ms p95=<n>ms p99=<n>ms
-trips by shard          {"shard-0": {"2": <n>}, "shard-1": {"1": <n>}}
+rollout duration        96s, overlapping the 60s load run
+ride requests           606 submitted, 0 http errors
+driver position pings   37200 ok, 0 http errors
+driver ping retries     0 (idempotent upsert retried once on transport failure)
+ride retries            0 (retried once on transport failure; a stored first attempt would show as a trip row beyond submissions)
+sends skipped           0 rides, 0 driver pings (in-flight bound reached; skipped and counted, not queued, not http errors)
+rides decided           606 of 606 trip rows, 606 matched, 0 still requested
+matching counters       303 matched / 0 unmatched (in process, per pod, reset by the rolling update)
+matches per minute      303 (run), 303 (trailing window, answering pod only)
+match latency           p50=19ms p95=123ms p99=273ms (answering pod reservoir)
+trips by shard          {"shard-0": {"2": 303}, "shard-1": {"1": 303}}
 RESULT: PASS (zero request errors across the rolling update)
 ```
 <!-- rollout-evidence:end -->
