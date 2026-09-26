@@ -6,6 +6,8 @@ metadata:
   namespace: dispatchgrid
 spec:
   backoffLimit: 0
+  # The script defaults to 180 s of active load and caps overrides at 300 s; leave
+  # bounded room for startup and the 180 s settle window. Duration alone is not coverage.
   activeDeadlineSeconds: 600
   template:
     metadata:

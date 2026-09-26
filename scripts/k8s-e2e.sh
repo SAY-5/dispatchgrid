@@ -9,19 +9,22 @@ cd "$(dirname "$0")/.."
 CLUSTER="${KIND_CLUSTER:-dispatchgrid}"
 TAG="${TAG:-dev}"
 NS=dispatchgrid
-DURATION="${DURATION_SECONDS:-60}"
+DURATION="${DURATION_SECONDS:-180}"
 ROLL_AFTER="${ROLL_AFTER_SECONDS:-10}"
 KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 MODULES="rider-request-service driver-location-service matching-service loadgen"
 SERVICES="rider-request-service driver-location-service matching-service"
 SUMMARY_FILE="${SUMMARY_FILE:-loadgen-summary.json}"
+ROLLOUT_FILE="${ROLLOUT_FILE:-rollout-windows.jsonl}"
+EVIDENCE_FILE="${EVIDENCE_FILE:-rollout-evidence.txt}"
 # The job controller deletes the pod when the job fails, so kubectl logs has nothing left to
 # read by the time diagnostics run. Capture the output while the generator is alive.
 LOADGEN_LOG="${LOADGEN_LOG:-loadgen.log}"
 LOADGEN_LOG_PID=""
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
+epoch_ms() { python3 -c 'import time; print(time.time_ns() // 1000000)'; }
 fail() { log "FAIL: $*"; dump; exit 1; }
 
 dump() {
@@ -52,6 +55,14 @@ cleanup() {
 for tool in docker kind kubectl python3; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool"; exit 1; }
 done
+# Keep the 600-second job deadline meaningful: allow at most 300 seconds of active load,
+# leaving time for startup and the 180-second settle window. Short custom runs are allowed,
+# but must still pass the measured coverage gate; configured duration is never proof.
+[[ "$DURATION" =~ ^[0-9]+$ ]] && [ "$DURATION" -ge 1 ] && [ "$DURATION" -le 300 ] \
+  || { echo "DURATION_SECONDS must be an integer from 1 to 300"; exit 1; }
+[[ "$ROLL_AFTER" =~ ^[0-9]+$ ]] && [ "$ROLL_AFTER" -lt "$DURATION" ] \
+  || { echo "ROLL_AFTER_SECONDS must be a nonnegative integer below DURATION_SECONDS"; exit 1; }
+: > "$ROLLOUT_FILE"
 
 if [ "$SKIP_BUILD" != "1" ]; then
   for m in $MODULES; do
@@ -110,11 +121,17 @@ log "rolling update: ROLLOUT_MARKER=$MARKER on $SERVICES (maxUnavailable=0, maxS
 # One deployment at a time. Replacing all three at once puts nine service pods on the node
 # (two replicas plus one surge each), which on a small local VM starves them: pods restart and
 # the rollout never converges. Staged replacement keeps maxUnavailable=0 and maxSurge=1 per
-# deployment, keeps load flowing throughout, and only ever adds one extra pod.
+# deployment and only ever adds one extra pod. Actual sustained load coverage is asserted
+# against generator timestamps/samples below, rather than inferred from configured duration.
 for d in $SERVICES; do
+  SERVICE_START=$(epoch_ms)
   kubectl -n "$NS" set env deploy/"$d" ROLLOUT_MARKER="$MARKER" >/dev/null
   kubectl -n "$NS" rollout status deploy/"$d" --timeout=420s \
     || fail "rollout of $d did not converge within 420s"
+  SERVICE_END=$(epoch_ms)
+  printf '{"service":"%s","startEpochMs":%s,"endEpochMs":%s}\n' \
+    "$d" "$SERVICE_START" "$SERVICE_END" >> "$ROLLOUT_FILE"
+  log "rollout window: $d ${SERVICE_START}ms -> ${SERVICE_END}ms (UTC epoch)"
 done
 ROLL_END=$(date +%s)
 log "rolling update finished in $((ROLL_END - ROLL_START))s"
@@ -141,47 +158,4 @@ SUMMARY=$(kubectl -n "$NS" logs job/loadgen | grep '^SUMMARY_JSON ' | tail -1 | 
 [ -n "$SUMMARY" ] || fail "no SUMMARY_JSON line in load generator output"
 echo "$SUMMARY" > "$SUMMARY_FILE"
 
-python3 - "$SUMMARY" "$((ROLL_END - ROLL_START))" <<'PY'
-import json, sys
-s = json.loads(sys.argv[1])
-roll = int(sys.argv[2])
-problems = []
-if s["rideErrors"] != 0:
-    problems.append(f"ride http errors during rollout: {s['rideErrors']}")
-if s["pingErrors"] != 0:
-    problems.append(f"driver ping http errors during rollout: {s['pingErrors']}")
-if s["ridesSubmitted"] == 0:
-    problems.append("no rides submitted")
-# The counters behind /matching/stats are in process and per pod, so a rolling update resets them
-# and one read sees only the pod that answered. Assert decisions from the trip rows in the city
-# shards, which survive pod replacement.
-if s["durableDecided"] < s["ridesSubmitted"]:
-    problems.append(f"undecided rides: {s['ridesSubmitted'] - s['durableDecided']} of {s['ridesSubmitted']}")
-if s["durableTrips"] > s["ridesSubmitted"]:
-    problems.append(f"trip rows beyond submissions: {s['durableTrips'] - s['ridesSubmitted']} (a retried ride whose first attempt had been stored)")
-if s["durableMatched"] < 0.9 * s["ridesSubmitted"]:
-    problems.append(f"match rate too low: {s['durableMatched']}/{s['ridesSubmitted']}")
-shards = s["tripsByShard"]
-for shard, cities in shards.items():
-    if len(cities) != 1:
-        problems.append(f"{shard} holds trips from cities {sorted(cities)}; expected exactly one city per shard")
-print()
-print("== rolling update evidence ==")
-print(f"rollout duration        {roll}s, overlapping the {s['durationSeconds']}s load run")
-print(f"ride requests           {s['ridesSubmitted']} submitted, {s['rideErrors']} http errors")
-print(f"driver position pings   {s['pingsOk']} ok, {s['pingErrors']} http errors")
-print(f"driver ping retries     {s.get('pingRetries', 0)} (idempotent upsert retried once on transport failure)")
-print(f"ride retries            {s.get('rideRetries', 0)} (retried once on transport failure; a stored first attempt would show as a trip row beyond submissions)")
-print(f"sends skipped           {s.get('ridesSkipped', 0)} rides, {s.get('pingsSkipped', 0)} driver pings (in-flight bound reached; skipped and counted, not queued, not http errors)")
-print(f"rides decided           {s['durableDecided']} of {s['durableTrips']} trip rows, {s['durableMatched']} matched, {s['durableRequested']} still requested")
-print(f"matching counters       {s['matched']} matched / {s['unmatched']} unmatched (in process, per pod, reset by the rolling update)")
-print(f"matches per minute      {s['matchesPerMinuteRun']} (run), {s['matchesPerMinuteWindow']} (trailing window, answering pod only)")
-print(f"match latency           p50={s['p50LatencyMs']}ms p95={s['p95LatencyMs']}ms p99={s['p99LatencyMs']}ms (answering pod reservoir)")
-print(f"trips by shard          {json.dumps(shards)}")
-if problems:
-    print("RESULT: FAIL")
-    for p in problems:
-        print(" - " + p)
-    sys.exit(1)
-print("RESULT: PASS (zero request errors across the rolling update)")
-PY
+python3 scripts/verify-rollout-evidence.py "$SUMMARY_FILE" "$ROLLOUT_FILE" | tee "$EVIDENCE_FILE"

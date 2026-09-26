@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,45 +38,39 @@ public final class LoadGen {
         "submitting %d rides/s for %d s%n", opt.ridesPerSecond(), opt.durationSeconds());
     long runStart = System.nanoTime();
     rides.start(opt.ridesPerSecond());
+    long loadStartedAtEpochMs = System.currentTimeMillis();
+    List<Map<String, Long>> loadSamples = new ArrayList<>();
+    loadSamples.add(
+        Map.of(
+            "epochMs", loadStartedAtEpochMs,
+            "ridesSubmitted", rides.submitted.get(),
+            "pingsOk", fleet.pingsOk.get()));
     for (int s = 1; s <= opt.durationSeconds(); s++) {
       Thread.sleep(1000);
+      // Local successful-send counters only: a slow /matching/stats read must neither delay
+      // sampling nor extend the advertised load duration. Final service stats are read below.
+      loadSamples.add(
+          Map.of(
+              "epochMs", System.currentTimeMillis(),
+              "ridesSubmitted", rides.submitted.get(),
+              "pingsOk", fleet.pingsOk.get()));
       if (s % 10 == 0) {
-        // This read only prints a progress line. The measured counters are rides.errors and
-        // fleet.pingErrors, so a stats read that times out while a pod is being replaced must
-        // never end the run. Like every other read it is issued from this thread and waited on
-        // before the next, so at most one read is ever in flight.
-        try {
-          JsonNode now = http.getJson(opt.matchingUrl() + "/matching/stats");
-          System.out.printf(
-              "  t=%3ds submitted=%d matched=%d unmatched=%d ride_errors=%d ping_errors=%d"
-                  + " rides_skipped=%d pings_skipped=%d rides_in_flight=%d pings_in_flight=%d%n",
-              s,
-              rides.submitted.get(),
-              now.get("matched").asLong() - matched0,
-              now.get("unmatched").asLong() - unmatched0,
-              rides.errors.get(),
-              fleet.pingErrors.get(),
-              rides.skipped.get(),
-              fleet.pingsSkipped.get(),
-              rides.inFlight(),
-              fleet.inFlight());
-        } catch (IOException e) {
-          System.out.printf(
-              "  t=%3ds submitted=%d ride_errors=%d ping_errors=%d rides_skipped=%d"
-                  + " pings_skipped=%d rides_in_flight=%d pings_in_flight=%d"
-                  + " (stats read failed: %s)%n",
-              s,
-              rides.submitted.get(),
-              rides.errors.get(),
-              fleet.pingErrors.get(),
-              rides.skipped.get(),
-              fleet.pingsSkipped.get(),
-              rides.inFlight(),
-              fleet.inFlight(),
-              e.getMessage());
-        }
+        System.out.printf(
+            "  t=%3ds submitted=%d pings_ok=%d ride_errors=%d ping_errors=%d rides_skipped=%d"
+                + " pings_skipped=%d rides_in_flight=%d pings_in_flight=%d%n",
+            s,
+            rides.submitted.get(),
+            fleet.pingsOk.get(),
+            rides.errors.get(),
+            fleet.pingErrors.get(),
+            rides.skipped.get(),
+            fleet.pingsSkipped.get(),
+            rides.inFlight(),
+            fleet.inFlight());
       }
     }
+    // Use the final sample before shutdown/draining, never the time when settling finishes.
+    long loadStoppedAtEpochMs = loadSamples.getLast().get("epochMs");
     rides.stop();
     long runSeconds = Math.max(1, (System.nanoTime() - runStart) / 1_000_000_000L);
 
@@ -89,6 +84,10 @@ public final class LoadGen {
 
     Map<String, Object> summary = new LinkedHashMap<>();
     summary.put("durationSeconds", opt.durationSeconds());
+    summary.put("ridesPerSecond", opt.ridesPerSecond());
+    summary.put("loadStartedAtEpochMs", loadStartedAtEpochMs);
+    summary.put("loadStoppedAtEpochMs", loadStoppedAtEpochMs);
+    summary.put("loadSamples", loadSamples);
     summary.put("cities", cities.stream().map(City::name).toList());
     summary.put("drivers", fleet.size());
     summary.put("pingsOk", fleet.pingsOk.get());

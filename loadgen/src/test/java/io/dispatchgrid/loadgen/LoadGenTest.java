@@ -8,6 +8,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -15,8 +17,87 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class LoadGenTest {
+
+  @Test
+  void recordsActualActiveLoadBoundariesAndSuccessfulTrafficSamples(@TempDir Path temporary)
+      throws Exception {
+    AtomicInteger rides = new AtomicInteger();
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+    server.createContext(
+        "/",
+        exchange -> {
+          String path = exchange.getRequestURI().getPath();
+          String reply;
+          if (path.equals("/rides")) {
+            rides.incrementAndGet();
+            reply = "{\"shard\":1,\"cityId\":1}";
+          } else if (path.equals("/rides/stats")) {
+            reply = "{\"shard-1\":{\"1:MATCHED\":" + rides.get() + "}}";
+          } else if (path.equals("/matching/stats")) {
+            reply =
+                "{\"matched\":0,\"unmatched\":0,\"matchesPerMinute\":0,"
+                    + "\"p50LatencyMs\":0,\"p95LatencyMs\":0,\"p99LatencyMs\":0}";
+          } else {
+            reply = "{\"status\":\"UP\"}";
+          }
+          exchange.getRequestBody().readAllBytes();
+          byte[] body = reply.getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, body.length);
+          try (OutputStream out = exchange.getResponseBody()) {
+            out.write(body);
+          }
+        });
+    server.start();
+    Process process = null;
+    try {
+      String url = "http://127.0.0.1:" + server.getAddress().getPort();
+      Path summary = temporary.resolve("summary.json");
+      Path log = temporary.resolve("loadgen.log");
+      long before = System.currentTimeMillis();
+      process =
+          new ProcessBuilder(
+                  Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                  "-cp",
+                  System.getProperty("java.class.path"),
+                  LoadGen.class.getName(),
+                  "--rider-url=" + url,
+                  "--driver-url=" + url,
+                  "--matching-url=" + url,
+                  "--duration=2",
+                  "--rides-per-second=10",
+                  "--drivers-per-city=1",
+                  "--cities=1",
+                  "--out=" + summary)
+              .redirectErrorStream(true)
+              .redirectOutput(log.toFile())
+              .start();
+      assertThat(process.waitFor(20, TimeUnit.SECONDS)).isTrue();
+      assertThat(process.exitValue()).withFailMessage(Files.readString(log)).isZero();
+      JsonNode output = Http.JSON.readTree(Files.readString(summary));
+      assertThat(output.has("loadStartedAtEpochMs")).isTrue();
+      long started = output.get("loadStartedAtEpochMs").asLong();
+      long stopped = output.get("loadStoppedAtEpochMs").asLong();
+      assertThat(started).isBetween(before, System.currentTimeMillis());
+      assertThat(stopped - started).isBetween(1900L, 10000L);
+      JsonNode samples = output.get("loadSamples");
+      assertThat(samples.size()).isEqualTo(3);
+      assertThat(samples.get(0).get("epochMs").asLong()).isEqualTo(started);
+      assertThat(samples.get(2).get("epochMs").asLong()).isEqualTo(stopped);
+      assertThat(samples.get(2).get("ridesSubmitted").asLong()).isGreaterThan(0);
+      assertThat(samples.get(2).get("pingsOk").asLong())
+          .isGreaterThan(samples.get(0).get("pingsOk").asLong());
+      assertThat(output.get("ridesPerSecond").asInt()).isEqualTo(10);
+    } finally {
+      if (process != null && process.isAlive()) {
+        process.destroyForcibly();
+      }
+      server.stop(0);
+    }
+  }
 
   @Test
   void parsesFlagsInBothForms() {
