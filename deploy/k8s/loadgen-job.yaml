@@ -36,6 +36,11 @@ spec:
               value: "300"
             - name: SUMMARY_OUT
               value: /tmp/loadgen-summary.json
+            # Filled in by scripts/k8s-e2e.sh so the summary names the commit and machine it ran on.
+            - name: RUN_COMMIT
+              value: "COMMIT_PLACEHOLDER"
+            - name: RUN_MACHINE
+              value: "MACHINE_PLACEHOLDER"
           resources:
             requests:
               cpu: 250m

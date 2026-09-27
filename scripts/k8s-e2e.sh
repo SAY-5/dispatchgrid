@@ -52,7 +52,7 @@ cleanup() {
   fi
 }
 
-for tool in docker kind kubectl python3; do
+for tool in docker git kind kubectl python3; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool"; exit 1; }
 done
 # Keep the 600-second job deadline meaningful: allow at most 300 seconds of active load,
@@ -62,6 +62,20 @@ done
   || { echo "DURATION_SECONDS must be an integer from 1 to 300"; exit 1; }
 [[ "$ROLL_AFTER" =~ ^[0-9]+$ ]] && [ "$ROLL_AFTER" -lt "$DURATION" ] \
   || { echo "ROLL_AFTER_SECONDS must be a nonnegative integer below DURATION_SECONDS"; exit 1; }
+# The generator prints the commit and machine at the top of its summary, as the compose demo does.
+if [ -z "${RUN_COMMIT:-}" ]; then
+  RUN_COMMIT="$(git rev-parse --short HEAD)"
+  git diff --quiet HEAD || RUN_COMMIT="$RUN_COMMIT-dirty"
+fi
+if [ -z "${RUN_MACHINE:-}" ]; then
+  RUN_MACHINE="${GITHUB_RUN_ID:+GitHub Actions run $GITHUB_RUN_ID, }$(uname -s) $(uname -m)"
+  RUN_MACHINE="$RUN_MACHINE $(getconf _NPROCESSORS_ONLN) CPU, $(docker info --format '{{.NCPU}} {{.MemTotal}}' \
+    | awk '{printf "Docker %d CPU / %.1f GiB", $1, $2 / 1073741824}')"
+fi
+# Both go into the Job manifest through sed, so keep them to characters that need no escaping.
+SAFE_TEXT='^[A-Za-z0-9 ._,:/()+-]+$'
+[[ "$RUN_COMMIT" =~ $SAFE_TEXT ]] && [[ "$RUN_MACHINE" =~ $SAFE_TEXT ]] \
+  || { echo "RUN_COMMIT and RUN_MACHINE may only use letters, digits, spaces and ._,:/()+-"; exit 1; }
 : > "$ROLLOUT_FILE"
 
 if [ "$SKIP_BUILD" != "1" ]; then
@@ -100,8 +114,10 @@ done
 kubectl -n "$NS" get pods
 
 log "starting in-cluster load generator (${DURATION}s at 10 rides/s, 300 drivers per city)"
-sed -e "s/TAG_PLACEHOLDER/$TAG/" -e "s/DURATION_PLACEHOLDER/$DURATION/" deploy/k8s/loadgen-job.yaml \
-  | kubectl apply -f - >/dev/null
+log "commit $RUN_COMMIT on $RUN_MACHINE"
+sed -e "s/TAG_PLACEHOLDER/$TAG/" -e "s/DURATION_PLACEHOLDER/$DURATION/" \
+  -e "s|COMMIT_PLACEHOLDER|$RUN_COMMIT|" -e "s|MACHINE_PLACEHOLDER|$RUN_MACHINE|" \
+  deploy/k8s/loadgen-job.yaml | kubectl apply -f - >/dev/null
 
 for _ in $(seq 1 120); do
   if kubectl -n "$NS" logs job/loadgen 2>/dev/null | grep -q "submitting"; then break; fi
