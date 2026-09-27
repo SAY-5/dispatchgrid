@@ -254,9 +254,10 @@ python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 ## Tests
 
-63 unit tests across the five modules, reported by Surefire on `mvn -B -DskipITs test`, plus the
-Testcontainers integration tests Failsafe runs on `mvn -B verify` and 26 cases in `scripts` over the
-two gates that guard the measured figures in this file.
+`mvn -B verify` at commit 3cbe8fe ran 63 unit tests across the five modules under Surefire and 14
+Testcontainers integration tests under Failsafe, all passing, and
+`python3 -m unittest discover -s scripts -p 'test_*.py'` runs 28 cases over the two gates that guard
+the measured figures in this file: 13 for the demo patcher and 15 for the rollout gate.
 
 * Unit: shard routing determinism and overrides, haversine, grid cells, pickup ETA, radius expansion, matcher
   policy (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides,
