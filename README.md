@@ -204,6 +204,20 @@ shard holds more than one city. The same script is the `k8s-e2e` job in `.github
   state machine (complete only from MATCHED by the matched driver, cancel only while not final)
   and reads the timeline back with its payloads.
 
+## Releases
+
+| Version | Feature |
+| --- | --- |
+| [v1.0.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v1.0.0) | baseline platform: rider request, driver location, and Kafka Streams matching with atomic Redis claims, page-growth-then-widen candidate search, city-keyed MySQL shards, and zero-downtime rolling updates on Kubernetes |
+| [v2.0.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v2.0.0) | per-city, per-cell surge pricing in the matching service from trailing-window demand and TTL-decayed supply, clamped, stamped on every match and served by `GET /pricing/{city}`, with two matching replicas under static membership |
+| [v3.0.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v3.0.0) | trip lifecycle over the `ride-lifecycle` topic: cancel and complete, the conditional row update only the matched driver may make, and the Redis claim released at once instead of at claim expiry |
+| [v4.0.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v4.0.0) | retries for a ride that finds no free driver: a changelogged `pending-retries` store with a wall-clock punctuator, a `ride.retry` row per pass, and `UNMATCHED` only after the last attempt |
+| [v5.0.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v5.0.0) | trip timeline and pickup ETA: `GET /rides/{rideId}/timeline` read from the shard that owns the trip, and `pickupEtaSeconds` from the driver distance the match now persists |
+| [v5.1.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v5.1.0) | the kind rolling update proof made to pass and its evidence recorded: the load generator at a 1Gi ceiling with bounded in-flight sends that skip and count past the bound, one retry per ride on a transport failure, a failed generator job reported with its termination reason, ride decisions asserted from the durable trip rows rather than per-pod counters, the three Deployments replaced one at a time, and the rollout evidence block above filled from a passing CI run |
+
+Each version is an annotated git tag with a GitHub release; the release notes carry the detail
+behind a row.
+
 ## Layout
 
 ```
