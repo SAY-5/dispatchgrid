@@ -4,3 +4,4 @@
 *.iml
 deploy/.kind-*
 loadgen-summary.json
+demo-out/
