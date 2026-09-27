@@ -10,3 +10,6 @@ target/
 deploy/.kind-*
 loadgen-summary.json
 loadgen.log
+rollout-windows.jsonl
+rollout-evidence.txt
+__pycache__/

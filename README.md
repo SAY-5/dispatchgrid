@@ -46,7 +46,7 @@ make build      # mvn package
 make test       # unit tests plus Testcontainers integration tests (needs Docker)
 make lint       # spotless (google-java-format)
 make demo       # docker compose stack + migrations + 60 s load run, prints the summary
-make k8s-e2e    # kind cluster, deploy, load, rolling update with zero request errors
+make k8s-e2e    # kind cluster, deploy, 180 s load, measured coverage of all rolling updates
 ```
 
 `make demo` brings up Redpanda, two MySQL 8 shards, Redis 7, and the three services, then runs
@@ -144,13 +144,28 @@ endpoints drain before the JVM shuts down gracefully), a Redpanda Deployment, tw
 StatefulSets, Redis, a ConfigMap, a Secret, and a `kustomization.yaml`.
 
 `scripts/k8s-e2e.sh` builds the images, creates a kind cluster, loads the images, applies the
-manifests, waits for readiness, starts the load generator as an in-cluster Job, and while rides
-and pings are flowing changes an environment variable on all three Deployments to trigger a
-rolling update. The script then asserts that the generator recorded zero HTTP errors, that every
-ride got a decision, and that each shard holds exactly one city. CI runs this on every push.
-The block below is the output of the CI run named on its first line; totals differ a little
-between runs (this one submitted 606 rides in 60 s) and the latency line is the reservoir of
-whichever matching pod answered the stats read on that runner.
+manifests, waits for readiness, and starts a 180-second in-cluster load Job (the Compose demo
+still defaults to 60 seconds). It rolls the three Deployments sequentially, recording the UTC
+epoch-millisecond interval from before each update until that Deployment is ready.
+`scripts/verify-rollout-evidence.py` then checks those intervals against the generator's actual
+active-load timestamps and one-second samples of successful rides and pings. CI runs this on
+pull requests, main pushes, and manual dispatch; green deployment status alone is not proof.
+
+Coverage requires all three complete rollout windows to be inside the measured load window,
+with two seconds of margin at either end, no sample/progress gap over five seconds, and at least
+90% of the configured successful request rate across each rollout (allowing scheduler jitter).
+Any HTTP error or skipped send fails the verdict. Every submitted ride must have a durable
+decision, at least 90% must match, and both shards must each contain exactly one city.
+The runner and kind containers share the kernel's epoch clock; this timestamp comparison is
+not a clock-synchronization guarantee for a remote multi-node cluster. The coverage claim is
+sampled, not a claim about sub-second outages or zero transport retries; retries remain reported.
+
+**Historical evidence, not complete rollout coverage:** the block below is retained verbatim
+from run 36201543211, commit `20ce8c4`, on 2026-09-25. Its old `PASS` verdict was insufficient:
+the 96-second rollout exceeded the 60-second load run, and the checker did not verify overlap
+for each service. It must not be cited as proof that all three replacements occurred under
+load. A passing hosted run of the strengthened gate is still required before that claim is
+made. The latency line is the reservoir of whichever matching pod answered the stats read.
 
 <!-- rollout-evidence:start -->
 ```
@@ -177,9 +192,21 @@ RESULT: PASS (zero request errors across the rolling update)
 ```
 <!-- rollout-evidence:end -->
 
-The script exits non-zero (and prints `RESULT: FAIL` with the reasons) if any ride or ping
-returned an HTTP error while the pods were being replaced, if a ride was left undecided, or if a
-shard holds more than one city. The same script is the `k8s-e2e` job in `.github/workflows/ci.yml`.
+The strengthened gate prints `COVERAGE: PASS` only after measured coverage and load validity
+checks pass, followed by `RESULT: PASS`. Missing telemetry, a too-short load run, skipped sends,
+or failed outcome checks instead produce `RESULT: FAIL` and a nonzero exit. Set
+`DURATION_SECONDS` between 1 and 300 to tune a run; a longer configured duration does not bypass
+the gate. The Job remains bounded by a 600-second deadline, including its 180-second settle
+window. `ROLL_AFTER_SECONDS` defaults to 10 and must be below the load duration.
+
+The `loadgen-summary` CI artifact includes `loadgen-summary.json` (timestamps and samples),
+`rollout-windows.jsonl` (one completed interval per service), `rollout-evidence.txt` (verdict),
+and `loadgen.log`. To recheck an artifact independently, run:
+
+```sh
+python3 scripts/verify-rollout-evidence.py loadgen-summary.json rollout-windows.jsonl
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+```
 
 ## Tests
 

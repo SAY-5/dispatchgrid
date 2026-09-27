@@ -24,6 +24,8 @@ jobs:
           cache: maven
       - name: lint
         run: mvn -B spotless:check
+      - name: rollout evidence gate regression tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: verify (unit tests via surefire, testcontainers integration tests via failsafe)
         run: mvn -B verify
       - name: test reports
@@ -54,5 +56,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: loadgen-summary
-          path: loadgen-summary.json
+          path: |
+            loadgen-summary.json
+            rollout-windows.jsonl
+            rollout-evidence.txt
+            loadgen.log
           if-no-files-found: ignore
