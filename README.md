@@ -241,7 +241,9 @@ python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 ## Tests
 
-55 unit tests (Surefire) and 14 integration tests (Failsafe, Testcontainers) across the five modules.
+63 unit tests across the five modules, reported by Surefire on `mvn -B -DskipITs test`, plus the
+Testcontainers integration tests Failsafe runs on `mvn -B verify` and 26 cases in `scripts` over the
+two gates that guard the measured figures in this file.
 
 * Unit: shard routing determinism and overrides, haversine, grid cells, pickup ETA, radius expansion, matcher
   policy (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides,
@@ -288,7 +290,9 @@ matching-service/         Kafka Streams topology, Matcher, SurgeTracker, GET /ma
 loadgen/                  synthetic fleet and rider traffic with a measured summary
 deploy/docker-compose.yml local stack
 deploy/k8s/               manifests + kustomization + loadgen job
+scripts/compose-demo.sh   the compose demo, with the commit, machine and load average recorded
 scripts/k8s-e2e.sh        kind cluster, deploy, load, rolling update, assertions
+scripts/patch-demo-summary.py  rewrites the demo block above from a run, or refuses
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the reasoning behind the design.
