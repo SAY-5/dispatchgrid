@@ -26,6 +26,8 @@ public final class LoadGen {
     JsonNode before = http.getJsonWithRetry(opt.matchingUrl() + "/matching/stats", 5);
     long matched0 = before.get("matched").asLong();
     long unmatched0 = before.get("unmatched").asLong();
+    long retries0 = before.get("retries").asLong();
+    long dropped0 = before.get("dropped").asLong();
 
     Fleet fleet = new Fleet(http, opt.driverUrl(), cities, opt.driversPerCity(), 42);
     System.out.printf("seeding %d drivers across %d cities%n", fleet.size(), cities.size());
@@ -79,6 +81,8 @@ public final class LoadGen {
 
     long matched = stats.get("matched").asLong() - matched0;
     long unmatched = stats.get("unmatched").asLong() - unmatched0;
+    long matchRetries = stats.get("retries").asLong() - retries0;
+    long dropped = stats.get("dropped").asLong() - dropped0;
     JsonNode shardStats = http.getJsonWithRetry(opt.riderUrl() + "/rides/stats", 5);
     Map<String, Map<Integer, Long>> shards = shardDistribution(shardStats);
 
@@ -100,6 +104,10 @@ public final class LoadGen {
     summary.put("ridesSkipped", rides.skipped.get());
     summary.put("matched", matched);
     summary.put("unmatched", unmatched);
+    // A ride that finds no free driver waits in the retry store for its next attempt, so this is
+    // where a latency tail comes from. Per pod like the counters above, and reset by a replacement.
+    summary.put("matchRetries", matchRetries);
+    summary.put("dropped", dropped);
     summary.put("matchesPerMinuteRun", Math.round(matched * 60.0 / runSeconds));
     summary.put("matchesPerMinuteWindow", stats.get("matchesPerMinute").asLong());
     summary.put("p50LatencyMs", stats.get("p50LatencyMs").asLong());

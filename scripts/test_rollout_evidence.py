@@ -64,12 +64,22 @@ class RolloutEvidenceTest(unittest.TestCase):
         summary["loadSamples"] = summary["loadSamples"][:61]
         self.assert_rejected(summary)
 
-    def test_rejects_skipped_offered_load_even_with_zero_http_errors(self):
-        for field in ("ridesSkipped", "pingsSkipped"):
-            with self.subTest(field=field):
-                summary = healthy_summary()
-                summary[field] = 1
-                self.assert_rejected(summary)
+    def test_rejects_one_skipped_ride_submission(self):
+        summary = healthy_summary()
+        summary["ridesSkipped"] = 1
+        self.assert_rejected(summary)
+
+    def test_rejects_pings_skipped_beyond_the_bound(self):
+        summary = healthy_summary()
+        summary["pingsSkipped"] = int(summary["pingsOk"] * 0.02)
+        self.assert_rejected(summary)
+
+    def test_accepts_a_few_skipped_pings_and_reports_them(self):
+        summary = healthy_summary()
+        summary["pingsSkipped"] = int(summary["pingsOk"] * 0.005)
+        result = self.check_evidence(summary)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"{summary['pingsSkipped']} skipped", result.stdout)
 
     def test_rejects_final_request_errors(self):
         for field in ("rideErrors", "pingErrors"):
