@@ -85,6 +85,7 @@ class DemoSummaryPatcherTest(unittest.TestCase):
             "finishedAt": "2026-09-27T05:12:14Z",
             "hostLoadAverageBefore": "9.12",
             "hostLoadAverageAfter": "8.44",
+            "stackMemory": "1849 MiB across 9 containers",
             "loadgenExitCode": 0,
         }
 
@@ -117,6 +118,7 @@ class DemoSummaryPatcherTest(unittest.TestCase):
         self.assertEqual(fenced, summary_text(self.commit) + "```\n")
         self.assertIn(f"`make demo` at commit {self.commit},", caption)
         self.assertIn("host load average 9.12 before the run and 8.44 after", caption)
+        self.assertIn("1849 MiB across 9 containers in use halfway through the load", caption)
         self.assertTrue(text.startswith("before\n"))
         self.assertTrue(text.endswith(f"{END}\nafter\n"))
 

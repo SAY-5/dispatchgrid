@@ -50,6 +50,7 @@ RUN_FIELDS = (
     "finishedAt",
     "hostLoadAverageBefore",
     "hostLoadAverageAfter",
+    "stackMemory",
 )
 PROVENANCE_FIELDS = (
     "commit",
@@ -162,7 +163,8 @@ def render(summary, run, head):
         f" {text_value(run, 'startedAt', 'run')} to {text_value(run, 'finishedAt', 'run')};"
         f" host load average {text_value(run, 'hostLoadAverageBefore', 'run')} before the run"
         f" and {text_value(run, 'hostLoadAverageAfter', 'run')} after (one minute averages on the"
-        " machine that launched it):"
+        f" machine that launched it); {text_value(run, 'stackMemory', 'run')} in use halfway"
+        " through the load, as `docker stats --no-stream` reported it:"
     )
     block = f"{START}\n{caption}\n\n```\n{body}```\n{END}\n"
     lowered = block.lower()
