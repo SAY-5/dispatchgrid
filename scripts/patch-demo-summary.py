@@ -82,8 +82,11 @@ def render(summary, run):
         raise Refused("summary: no provenance recorded")
     for field in PROVENANCE_FIELDS:
         text_value(provenance, field, "provenance")
-    if text_value(provenance, "commit", "provenance") != text_value(run, "commit", "run"):
+    commit = text_value(provenance, "commit", "provenance")
+    if commit != text_value(run, "commit", "run"):
         raise Refused("the two artifacts disagree about the commit, so they are not one run")
+    if commit.endswith("-dirty"):
+        raise Refused(f"the run was made on a modified tree ({commit}), so it is not reproducible")
 
     body = text_value(summary, "summaryText", "summary")
     if not body.startswith(HEADER):

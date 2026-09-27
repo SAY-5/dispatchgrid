@@ -132,6 +132,10 @@ services:
       RIDES_PER_SECOND: ${RIDES_PER_SECOND:-10}
       DRIVERS_PER_CITY: ${DRIVERS_PER_CITY:-300}
       SUMMARY_OUT: /tmp/loadgen-summary.json
+      # scripts/compose-demo.sh supplies these; left at the default the summary records that it
+      # does not know where it ran, and scripts/patch-demo-summary.py refuses to publish it.
+      RUN_COMMIT: ${RUN_COMMIT:-unspecified}
+      RUN_MACHINE: ${RUN_MACHINE:-unspecified}
       JAVA_TOOL_OPTIONS: -Xmx192m -XX:+UseSerialGC
     depends_on:
       - rider-request-service

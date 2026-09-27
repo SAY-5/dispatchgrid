@@ -128,6 +128,13 @@ class DemoSummaryPatcherTest(unittest.TestCase):
         edited["summaryText"] = SUMMARY_TEXT.replace("rides submitted     603,", "rides submitted     900,")
         self.assert_refused(edited, run_record())
 
+    def test_refuses_a_run_from_a_modified_tree(self):
+        dirty_summary, dirty_run = summary(), run_record()
+        dirty_summary["provenance"]["commit"] = "7f3a91c-dirty"
+        dirty_summary["summaryText"] = SUMMARY_TEXT.replace("7f3a91c", "7f3a91c-dirty")
+        dirty_run["commit"] = "7f3a91c-dirty"
+        self.assert_refused(dirty_summary, dirty_run)
+
     def test_refuses_a_readme_without_the_markers(self):
         self.assert_refused(summary(), run_record(), readme="no markers here\n")
 
