@@ -10,6 +10,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -58,7 +59,7 @@ class LoadGenTest {
       Path summary = temporary.resolve("summary.json");
       Path log = temporary.resolve("loadgen.log");
       long before = System.currentTimeMillis();
-      process =
+      ProcessBuilder builder =
           new ProcessBuilder(
                   Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                   "-cp",
@@ -73,8 +74,10 @@ class LoadGenTest {
                   "--cities=1",
                   "--out=" + summary)
               .redirectErrorStream(true)
-              .redirectOutput(log.toFile())
-              .start();
+              .redirectOutput(log.toFile());
+      builder.environment().put("RUN_COMMIT", "abc1234");
+      builder.environment().put("RUN_MACHINE", "a test host");
+      process = builder.start();
       assertThat(process.waitFor(20, TimeUnit.SECONDS)).isTrue();
       assertThat(process.exitValue()).withFailMessage(Files.readString(log)).isZero();
       JsonNode output = Http.JSON.readTree(Files.readString(summary));
@@ -91,12 +94,34 @@ class LoadGenTest {
       assertThat(samples.get(2).get("pingsOk").asLong())
           .isGreaterThan(samples.get(0).get("pingsOk").asLong());
       assertThat(output.get("ridesPerSecond").asInt()).isEqualTo(10);
+      JsonNode provenance = output.get("provenance");
+      assertThat(provenance.get("commit").asText()).isEqualTo("abc1234");
+      assertThat(provenance.get("machine").asText()).isEqualTo("a test host");
+      assertThat(provenance.get("kernel").asText()).contains(System.getProperty("os.arch"));
+      assertThat(Instant.parse(provenance.get("startedAt").asText()).toEpochMilli())
+          .isEqualTo(started / 1000 * 1000);
+      assertThat(Instant.parse(provenance.get("finishedAt").asText()).toEpochMilli())
+          .isEqualTo(stopped / 1000 * 1000);
+      assertThat(provenance.get("loadAverageAtStart").asText())
+          .matches("\\d+\\.\\d\\d|unavailable");
+      assertThat(provenance.get("loadAverageAtEnd").asText()).matches("\\d+\\.\\d\\d|unavailable");
+      assertThat(output.get("complete").asBoolean()).isTrue();
+      assertThat(output.get("summaryText").asText())
+          .startsWith("== dispatchgrid load summary ==")
+          .contains("commit              abc1234")
+          .contains("machine             a test host; container ");
     } finally {
       if (process != null && process.isAlive()) {
         process.destroyForcibly();
       }
       server.stop(0);
     }
+  }
+
+  @Test
+  void reportsALoadAverageThePlatformWillNotGiveAsUnavailable() {
+    assertThat(LoadGen.loadAverage(-1)).isEqualTo("unavailable");
+    assertThat(LoadGen.loadAverage(1.234)).isEqualTo("1.23");
   }
 
   @Test
