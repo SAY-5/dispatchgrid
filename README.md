@@ -154,47 +154,66 @@ pull requests, main pushes, and manual dispatch; green deployment status alone i
 Coverage requires all three complete rollout windows to be inside the measured load window,
 with two seconds of margin at either end, no sample/progress gap over five seconds, and at least
 90% of the configured successful request rate across each rollout (allowing scheduler jitter).
-Any HTTP error or skipped send fails the verdict. Every submitted ride must have a durable
+Any HTTP error fails the verdict, as does a skipped ride submission; skipped driver pings fail
+it above one percent of the pings delivered and are reported either way, because that bound is
+the generator refusing to queue a position write while a pod drains rather than a caller seeing
+the update. Every submitted ride must have a durable
 decision, at least 90% must match, and both shards must each contain exactly one city.
 The runner and kind containers share the kernel's epoch clock; this timestamp comparison is
 not a clock-synchronization guarantee for a remote multi-node cluster. The coverage claim is
 sampled, not a claim about sub-second outages or zero transport retries; retries remain reported.
 
-**Historical evidence, not complete rollout coverage:** the block below is retained verbatim
-from run 36201543211, commit `20ce8c4`, on 2026-09-25. Its old `PASS` verdict was insufficient:
-the 96-second rollout exceeded the 60-second load run, and the checker did not verify overlap
-for each service. It must not be cited as proof that all three replacements occurred under
-load. A passing hosted run of the strengthened gate is still required before that claim is
-made. The latency line is the reservoir of whichever matching pod answered the stats read.
+The block below is the output of the run named on its first line, the first hosted run to pass the
+strengthened gate. Each of the three replacements is reported with its own interval and the
+successful request rate measured across it. An earlier block quoted run 36201543211, whose verdict
+was insufficient: its 96-second rollout outlasted its 60-second load run, so the last replacement
+carried no load, and the checker did not verify overlap per service. Totals differ a little between
+runs, and the latency line is the reservoir of whichever matching pod answered the last stats read.
+That reservoir is in process and is reset by each replacement, so the pod that answers has usually
+just taken over and its sample is weighted toward the rides that were waiting in the retry store
+when it did: the same gate produced p95 798 ms in run 36282420129 and p95 40,030 ms here, with every
+ride decided and matched in both. The retried counter beside it is how many rides took that path.
 
 <!-- rollout-evidence:start -->
 ```
-$ ./scripts/k8s-e2e.sh    # GitHub Actions ubuntu-latest (2 vCPU), run 36201543211, commit 20ce8c4, 2026-09-25
-[23:40:47] rolling update: ROLLOUT_MARKER=rollout-1790379647 on rider-request-service driver-location-service matching-service (maxUnavailable=0, maxSurge=1)
+$ ./scripts/k8s-e2e.sh    # GitHub Actions ubuntu-latest (2 vCPU), run 36282821355, commit a0393fb, 2026-09-27
+[00:36:12] rolling update: ROLLOUT_MARKER=rollout-1790469372 on rider-request-service driver-location-service matching-service (maxUnavailable=0, maxSurge=1)
 deployment "rider-request-service" successfully rolled out
+[00:36:43] rollout window: rider-request-service 1790469372038ms -> 1790469403731ms (UTC epoch)
 deployment "driver-location-service" successfully rolled out
+[00:37:21] rollout window: driver-location-service 1790469403747ms -> 1790469441633ms (UTC epoch)
 deployment "matching-service" successfully rolled out
-[23:42:23] rolling update finished in 96s
+[00:38:06] rollout window: matching-service 1790469441648ms -> 1790469486111ms (UTC epoch)
+[00:38:06] rolling update finished in 114s
 
 == rolling update evidence ==
-rollout duration        96s, overlapping the 60s load run
-ride requests           606 submitted, 0 http errors
-driver position pings   37200 ok, 0 http errors
-driver ping retries     0 (idempotent upsert retried once on transport failure)
-ride retries            0 (retried once on transport failure; a stored first attempt would show as a trip row beyond submissions)
-sends skipped           0 rides, 0 driver pings (in-flight bound reached; skipped and counted, not queued, not http errors)
-rides decided           606 of 606 trip rows, 606 matched, 0 still requested
-matching counters       303 matched / 0 unmatched (in process, per pod, reset by the rolling update)
-matches per minute      303 (run), 303 (trailing window, answering pod only)
-match latency           p50=19ms p95=123ms p99=273ms (answering pod reservoir)
-trips by shard          {"shard-0": {"2": 303}, "shard-1": {"1": 303}}
-RESULT: PASS (zero request errors across the rolling update)
+measured active load    2026-09-27T00:36:00.258+00:00 -> 2026-09-27T00:39:00.557+00:00
+coverage policy         2s boundary margin; <=5s sampled progress gaps; >=90% target rate
+rider-request-service: 2026-09-27T00:36:12.038+00:00 -> 2026-09-27T00:36:43.731+00:00; load-contained=True
+  ridesSubmitted: 332 successes / 33.165s = 10.01/s (target 10/s)
+  pingsOk: 20325 successes / 33.165s = 612.84/s (target 600/s)
+driver-location-service: 2026-09-27T00:36:43.747+00:00 -> 2026-09-27T00:37:21.633+00:00; load-contained=True
+  ridesSubmitted: 390 successes / 39.043s = 9.99/s (target 10/s)
+  pingsOk: 23400 successes / 39.043s = 599.34/s (target 600/s)
+matching-service: 2026-09-27T00:37:21.648+00:00 -> 2026-09-27T00:38:06.111+00:00; load-contained=True
+  ridesSubmitted: 450 successes / 45.015s = 10.00/s (target 10/s)
+  pingsOk: 27000 successes / 45.015s = 599.80/s (target 600/s)
+ride requests           1804 submitted, 0 errors, 0 skipped
+driver position pings   115200 ok, 0 errors, 0 skipped
+transport retries       0 rides, 138 pings
+matching counters       614 matched, 0 unmatched, 38 retried, 0 dropped (in process, per pod, reset by each replacement)
+match latency           p50=36ms p95=40030ms p99=44736ms (reservoir of the pod that answered the last read; a ride with no free driver waits in the retry store, which is where the tail comes from)
+durable decisions       1804/1804; matched=1804
+trips by shard          {"shard-0": {"2": 902}, "shard-1": {"1": 902}}
+COVERAGE: PASS (all three complete rollouts inside sustained sampled load)
+RESULT: PASS (zero final request errors, no skipped ride, pings within the skip bound)
 ```
 <!-- rollout-evidence:end -->
 
 The strengthened gate prints `COVERAGE: PASS` only after measured coverage and load validity
-checks pass, followed by `RESULT: PASS`. Missing telemetry, a too-short load run, skipped sends,
-or failed outcome checks instead produce `RESULT: FAIL` and a nonzero exit. Set
+checks pass, followed by `RESULT: PASS`. Missing telemetry, a too-short load run, a skipped ride,
+pings skipped beyond the bound, or failed outcome checks instead produce `RESULT: FAIL` and a
+nonzero exit. Set
 `DURATION_SECONDS` between 1 and 300 to tune a run; a longer configured duration does not bypass
 the gate. The Job remains bounded by a 600-second deadline, including its 180-second settle
 window. `ROLL_AFTER_SECONDS` defaults to 10 and must be below the load duration.
