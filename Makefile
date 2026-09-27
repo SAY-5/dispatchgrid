@@ -9,6 +9,7 @@ build:
 	$(MVN) -B -DskipTests package
 
 test:
+	python3 -m unittest discover -s scripts -p 'test_*.py' -v
 	$(MVN) -B verify
 
 lint:
