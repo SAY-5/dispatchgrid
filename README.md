@@ -53,9 +53,11 @@ make k8s-e2e    # kind cluster, deploy, 180 s load, measured coverage of all rol
 and the three services, then runs the load generator once. The compose file caps every JVM at
 160 MB heap and MySQL at a 32 MB buffer pool so the whole stack fits in a small Docker VM; set
 `JAVA_OPTS` to lift the cap. The run is: 300 simulated drivers per city across two cities pinging
-their position every second, and ride requests at 10 per second for 60 seconds. The block below is
-one such run, with the commit, the clock window, the machine, and the load average at either end of
-the load on its first lines, because every number below them moves with those:
+their position every second, and ride requests at 10 per second for 60 seconds. A run now prints its
+own commit, clock window, machine and load average at either end of the load, because every number
+beside them moves with those. The block below is older than that format: it was captured at commit
+ae5dba8 on 2026-09-03 and carries none of those lines, nor the retry, skipped and durable decision
+fields a run prints today.
 
 <!-- demo-summary:start -->
 ```
@@ -70,12 +72,13 @@ shard distribution  shard-0: city 2 -> 301 trips | shard-1: city 1 -> 302 trips
 ```
 <!-- demo-summary:end -->
 
-No part of that block is written by hand. Every number comes from live service responses (the load
+Replacing it takes a run, not an edit. Every number comes from live service responses (the load
 generator counts its own requests and reads `GET /matching/stats`); the generator renders the text
 from those numbers and stores both in `demo-out/loadgen-summary.json`, the demo script records the
-host-side facts the container cannot see in `demo-out/demo-run.json`, and the patcher replaces the
-block from that pair, refusing to write if the run did not complete, if it ran on a modified tree,
-if the two artifacts are not from one run, or if a provenance field was never supplied:
+host-side facts the container cannot see in `demo-out/demo-run.json`, and
+`scripts/patch-demo-summary.py` rewrites the block from that pair, refusing if the run did not
+complete, if it ran on a modified tree, if the two artifacts are not from one run, or if a
+provenance field was never supplied:
 
 ```sh
 make demo
