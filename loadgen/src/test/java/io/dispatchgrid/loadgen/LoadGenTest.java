@@ -39,7 +39,7 @@ class LoadGenTest {
             reply = "{\"shard-1\":{\"1:MATCHED\":" + rides.get() + "}}";
           } else if (path.equals("/matching/stats")) {
             reply =
-                "{\"matched\":0,\"unmatched\":0,\"matchesPerMinute\":0,"
+                "{\"matched\":0,\"unmatched\":0,\"retries\":0,\"dropped\":0,\"matchesPerMinute\":0,"
                     + "\"p50LatencyMs\":0,\"p95LatencyMs\":0,\"p99LatencyMs\":0}";
           } else {
             reply = "{\"status\":\"UP\"}";
