@@ -25,9 +25,7 @@ images:
 	done
 
 demo:
-	$(COMPOSE) up -d --build --wait redpanda mysql-shard-0 mysql-shard-1 redis
-	$(COMPOSE) up -d --build rider-request-service driver-location-service matching-service
-	$(COMPOSE) --profile loadgen run --rm --build loadgen
+	./scripts/compose-demo.sh
 
 demo-down:
 	$(COMPOSE) --profile loadgen down -v --remove-orphans
