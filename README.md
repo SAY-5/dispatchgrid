@@ -51,39 +51,49 @@ make k8s-e2e    # kind cluster, deploy, 180 s load, measured coverage of all rol
 
 `make demo` runs `scripts/compose-demo.sh`, which brings up Redpanda, two MySQL 8 shards, Redis 7,
 and the three services, then runs the load generator once. The compose file caps every JVM at
-160 MB heap and MySQL at a 32 MB buffer pool so the whole stack fits in a small Docker VM; set
-`JAVA_OPTS` to lift the cap. The run is: 300 simulated drivers per city across two cities pinging
-their position every second, and ride requests at 10 per second for 60 seconds. A run now prints its
-own commit, clock window, machine and load average at either end of the load, because every number
-beside them moves with those. The block below is older than that format: it was captured at commit
-ae5dba8 on 2026-09-03 and carries none of those lines, nor the retry, skipped and durable decision
-fields a run prints today.
+160 MB heap and MySQL at a 32 MB buffer pool; set `JAVA_OPTS` to lift the cap. With those caps the
+run below used 1839 MiB of memory across its eight containers halfway through the load, inside a
+Docker VM of 6 CPU and 7.7 GiB: the line introducing the block records the first figure, as
+`docker stats --no-stream` reported it, and the summary's machine line the second. The run is: 300
+simulated drivers per city across two cities pinging their position every second, and ride requests
+at 10 per second for 60 seconds. The summary opens with its own commit, clock window, machine and
+load average at either end of the load, because every number below them moves with those.
 
 <!-- demo-summary:start -->
+`make demo` at commit e900540, 2026-09-27T22:19:09Z to 2026-09-27T22:20:40Z; host load average 6.94 before the run and 15.83 after (one minute averages on the machine that launched it); 1839 MiB across 8 containers in use halfway through the load, as `docker stats --no-stream` reported it:
+
 ```
 == dispatchgrid load summary ==
-drivers             600 (300 per city), pings ok=37200 errors=0
-rides submitted     603, http errors=0, by shard {shard-0=301, shard-1=302}
-matched             603
-unmatched           0
-matches per minute  603 over the 60 s run (matching-service trailing 60 s window: 603)
-match latency       p50=14 ms  p95=53 ms  p99=271 ms
-shard distribution  shard-0: city 2 -> 301 trips | shard-1: city 1 -> 302 trips
+run                 60 s at 10 rides/s, cities 1=austin, 2=seattle
+commit              e900540
+measured window     2026-09-27T22:19:39Z -> 2026-09-27T22:20:39Z
+machine             Darwin arm64 10 CPU, Docker VM 6 CPU / 7.7 GiB; container linux/aarch64, 6 CPU, JDK 21.0.12.1
+load average        1.91 at the start of the load, 2.38 at the end (kernel above)
+drivers             600 (300 per city), pings ok=37200 errors=0 retries=0 skipped=0
+rides submitted     602, http errors=0, retries=0, skipped=0, by shard {shard-0=301, shard-1=301}
+in-flight bound     1200 pings, 100 rides; a send past the bound is skipped and counted, not queued, and is not an http error
+decided (durable)   602 of 602 trip rows, 602 matched, 0 still requested
+matching counters   matched=602 unmatched=0 retried=0 dropped=0 (in process, per pod, reset by a rollout)
+matches per minute  602 over the 60 s run (matching-service trailing 60 s window: 602)
+match latency       p50=16 ms  p95=92 ms  p99=245 ms
+shard distribution  shard-0: city 2 -> 301 trips | shard-1: city 1 -> 301 trips
 ```
 <!-- demo-summary:end -->
 
-Replacing it takes a run, not an edit. Every number comes from live service responses (the load
-generator counts its own requests and reads `GET /matching/stats`); the generator renders the text
-from those numbers and stores both in `demo-out/loadgen-summary.json`, the demo script records the
-host-side facts the container cannot see in `demo-out/demo-run.json`, and
-`scripts/patch-demo-summary.py` rewrites the block from that pair, refusing if the run did not
-complete, if it ran on a modified tree, if the two artifacts are not from one run, or if a
-provenance field was never supplied:
+No part of the block is written by hand, and replacing it takes a run, not an edit. Every number
+comes from live service responses (the load generator counts its own requests and reads
+`GET /matching/stats`); the generator renders the text from those numbers and stores both in
+`demo-out/loadgen-summary.json`, the demo script records the host-side facts the container cannot
+see in `demo-out/demo-run.json`, and `scripts/patch-demo-summary.py` rewrites the block from that
+pair. The fenced text is the generator's summary exactly as it printed it, and the line above it
+comes from the run record. The patcher refuses if the run did not complete, if it ran on a modified
+tree or at a commit other than the one checked out, if the two artifacts are not from one run, if
+the text is missing a line the generator prints, or if a provenance field was never supplied:
 
 ```sh
 make demo
-python3 scripts/patch-demo-summary.py demo-out/loadgen-summary.json demo-out/demo-run.json
 make demo-down
+python3 scripts/patch-demo-summary.py demo-out/loadgen-summary.json demo-out/demo-run.json
 ```
 
 The numbers are measured, not configured: `matched`, `unmatched`, and the latency percentiles
@@ -293,7 +303,7 @@ matching-service/         Kafka Streams topology, Matcher, SurgeTracker, GET /ma
 loadgen/                  synthetic fleet and rider traffic with a measured summary
 deploy/docker-compose.yml local stack
 deploy/k8s/               manifests + kustomization + loadgen job
-scripts/compose-demo.sh   the compose demo, with the commit, machine and load average recorded
+scripts/compose-demo.sh   the compose demo, with the commit, machine, load average and memory recorded
 scripts/k8s-e2e.sh        kind cluster, deploy, load, rolling update, assertions
 scripts/patch-demo-summary.py  rewrites the demo block above from a run, or refuses
 ```
