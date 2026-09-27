@@ -72,7 +72,7 @@ print(f"driver ping retries     {s.get('pingRetries', 0)} (idempotent upsert ret
 print(f"ride retries            {s.get('rideRetries', 0)} (retried once on transport failure; a stored first attempt would show as a trip row beyond submissions)")
 print(f"sends skipped           {s.get('ridesSkipped', 0)} rides, {s.get('pingsSkipped', 0)} driver pings (in-flight bound reached; skipped and counted, not queued, not http errors)")
 print(f"rides decided           {s['durableDecided']} of {s['durableTrips']} trip rows, {s['durableMatched']} matched, {s['durableRequested']} still requested")
-print(f"matching counters       {s['matched']} matched / {s['unmatched']} unmatched (in process, per pod, reset by the rolling update)")
+print(f"matching counters       {s['matched']} matched / {s['unmatched']} unmatched / {s.get('matchRetries', 0)} retried / {s.get('dropped', 0)} dropped (in process, per pod, reset by the rolling update)")
 print(f"matches per minute      {s['matchesPerMinuteRun']} (run), {s['matchesPerMinuteWindow']} (trailing window, answering pod only)")
 print(f"match latency           p50={s['p50LatencyMs']}ms p95={s['p95LatencyMs']}ms p99={s['p99LatencyMs']}ms (answering pod reservoir)")
 print(f"trips by shard          {json.dumps(shards)}")

@@ -161,6 +161,15 @@ must fail, including the earlier 60 second run whose rollout outlasted its load;
 and the end to end job on every push. Totals differ a little between runs, and the latency line is
 the reservoir of whichever matching pod answered the stats read on that runner.
 
+Two numbers in the block are worth reading carefully rather than skipping. The skipped pings are the
+generator's in-flight bound refusing to queue position writes that the service was too slow to take:
+they are counted, not hidden, and the gate fails the run if they pass one percent of the pings that
+were delivered, so a handful during three pod replacements is degradation the run reports rather than
+a failure it conceals. The latency line is a reservoir from whichever matching pod answered the last
+stats read, and it holds a long tail because rides that found no free driver wait in the retry store
+for their next attempt, which is also why the retried counter sits beside it; every ride still
+reached a decision in the shard rows, so the tail is waiting rather than loss.
+
 <!-- rollout-evidence:start -->
 ```
 $ ./scripts/k8s-e2e.sh
