@@ -145,35 +145,45 @@ StatefulSets, Redis, a ConfigMap, a Secret, and a `kustomization.yaml`.
 
 `scripts/k8s-e2e.sh` builds the images, creates a kind cluster, loads the images, applies the
 manifests, waits for readiness, starts the load generator as an in-cluster Job, and while rides
-and pings are flowing changes an environment variable on all three Deployments to trigger a
-rolling update. The script then asserts that the generator recorded zero HTTP errors, that every
-ride got a decision, and that each shard holds exactly one city. CI runs this on every push.
-The block below is the output of the CI run named on its first line; totals differ a little
-between runs (this one submitted 606 rides in 60 s) and the latency line is the reservoir of
-whichever matching pod answered the stats read on that runner.
+and pings are flowing changes an environment variable on the three Deployments in turn to trigger a
+rolling update. The load runs for 240 seconds by default because the three staged replacements take
+about 96 seconds on a CI runner and longer on a loaded machine, and the proof is only a proof if the
+last replacement still has traffic: the script records when the generator began submitting, fails
+the run if the rollout finishes after the load window closes, and prints the window it used.
+
+`scripts/rollout_evidence.py` prints the evidence block and decides the verdict. It refuses a run
+that recorded a ride or ping HTTP error, that left a ride undecided, that put two cities in one
+shard, that finished its rollout outside the load window, that offered less than nine tenths of the
+rides or pings the Job asked for, or that skipped a ride submission or more than one percent of its
+pings at the generator's in-flight bound, because each of those can otherwise read as green while
+proving less. `scripts/rollout_evidence_cases.py` drives that gate with twelve runs, eleven of which
+must fail, including the earlier 60 second run whose rollout outlasted its load; CI runs those cases
+and the end to end job on every push. Totals differ a little between runs, and the latency line is
+the reservoir of whichever matching pod answered the stats read on that runner.
 
 <!-- rollout-evidence:start -->
 ```
-$ ./scripts/k8s-e2e.sh    # GitHub Actions ubuntu-latest (2 vCPU), run 36201543211, commit 20ce8c4, 2026-09-25
-[23:40:47] rolling update: ROLLOUT_MARKER=rollout-1790379647 on rider-request-service driver-location-service matching-service (maxUnavailable=0, maxSurge=1)
+$ ./scripts/k8s-e2e.sh
+[..] rolling update: ROLLOUT_MARKER=rollout-<ts> on rider-request-service driver-location-service matching-service (maxUnavailable=0, maxSurge=1)
 deployment "rider-request-service" successfully rolled out
 deployment "driver-location-service" successfully rolled out
 deployment "matching-service" successfully rolled out
-[23:42:23] rolling update finished in 96s
+[..] rolling update finished in <n>s
 
 == rolling update evidence ==
-rollout duration        96s, overlapping the 60s load run
-ride requests           606 submitted, 0 http errors
-driver position pings   37200 ok, 0 http errors
-driver ping retries     0 (idempotent upsert retried once on transport failure)
-ride retries            0 (retried once on transport failure; a stored first attempt would show as a trip row beyond submissions)
+rollout duration        <n>s, from +<n>s to +<n>s of the <n>s load run
+load coverage           the whole rolling update ran under load (<n>s of <n>s used)
+ride requests           <n> submitted, 0 http errors
+driver position pings   <n> ok, 0 http errors
+driver ping retries     <n> (idempotent upsert retried once on transport failure)
+ride retries            <n> (retried once on transport failure; a stored first attempt would show as a trip row beyond submissions)
 sends skipped           0 rides, 0 driver pings (in-flight bound reached; skipped and counted, not queued, not http errors)
-rides decided           606 of 606 trip rows, 606 matched, 0 still requested
-matching counters       303 matched / 0 unmatched (in process, per pod, reset by the rolling update)
-matches per minute      303 (run), 303 (trailing window, answering pod only)
-match latency           p50=19ms p95=123ms p99=273ms (answering pod reservoir)
-trips by shard          {"shard-0": {"2": 303}, "shard-1": {"1": 303}}
-RESULT: PASS (zero request errors across the rolling update)
+rides decided           <n> of <n> trip rows, <n> matched, 0 still requested
+matching counters       <n> matched / <n> unmatched (in process, per pod, reset by the rolling update)
+matches per minute      <n> (run), <n> (trailing window, answering pod only)
+match latency           p50=<n>ms p95=<n>ms p99=<n>ms (answering pod reservoir)
+trips by shard          {"shard-0": {"2": <n>}, "shard-1": {"1": <n>}}
+RESULT: PASS (zero request errors, full offered load, every replacement under load)
 ```
 <!-- rollout-evidence:end -->
 

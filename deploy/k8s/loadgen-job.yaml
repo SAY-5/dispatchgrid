@@ -6,7 +6,12 @@ metadata:
   namespace: dispatchgrid
 spec:
   backoffLimit: 0
-  activeDeadlineSeconds: 600
+  # The run is DURATION_SECONDS of load (240 by default, enough for the staged rolling update
+  # to finish inside the load window) plus up to SETTLE_SECONDS of waiting for the last trips
+  # to reach a terminal state, after seeding 600 drivers. 900 leaves room for all three on a
+  # loaded host; it is not a way to let a stuck run pass, because the script fails the moment
+  # the job reports Failed.
+  activeDeadlineSeconds: 900
   template:
     metadata:
       labels:

@@ -89,6 +89,10 @@ public final class LoadGen {
 
     Map<String, Object> summary = new LinkedHashMap<>();
     summary.put("durationSeconds", opt.durationSeconds());
+    // The rate and the fleet size are what the run was asked to offer; the evidence script
+    // checks the delivered counts against them, so they belong in the record of the run.
+    summary.put("ridesPerSecond", opt.ridesPerSecond());
+    summary.put("driversPerCity", opt.driversPerCity());
     summary.put("cities", cities.stream().map(City::name).toList());
     summary.put("drivers", fleet.size());
     summary.put("pingsOk", fleet.pingsOk.get());

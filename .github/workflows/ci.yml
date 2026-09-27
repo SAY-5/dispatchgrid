@@ -24,6 +24,8 @@ jobs:
           cache: maven
       - name: lint
         run: mvn -B spotless:check
+      - name: rollout evidence gate cases
+        run: python3 scripts/rollout_evidence_cases.py
       - name: verify (unit tests via surefire, testcontainers integration tests via failsafe)
         run: mvn -B verify
       - name: test reports
