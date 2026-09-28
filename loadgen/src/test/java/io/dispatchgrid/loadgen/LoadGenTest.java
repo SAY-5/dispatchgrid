@@ -124,6 +124,17 @@ class LoadGenTest {
               Files.readString(summary), new TypeReference<Map<String, Object>>() {});
       assertThat(LoadGen.renderSummary(stored)).isEqualTo(stored.get("summaryText"));
       assertThat(List.copyOf(stored.keySet()).getLast()).isEqualTo("complete");
+      // scripts/compose-demo.sh publishes the printed SUMMARY_JSON line, not the file, so the line
+      // must carry the same fields in the same order, `complete` last.
+      List<String> printed =
+          Files.readAllLines(log).stream().filter(l -> l.startsWith("SUMMARY_JSON ")).toList();
+      assertThat(printed).hasSize(1);
+      Map<String, Object> line =
+          Http.JSON.readValue(
+              printed.getFirst().substring("SUMMARY_JSON ".length()),
+              new TypeReference<Map<String, Object>>() {});
+      assertThat(line).isEqualTo(stored);
+      assertThat(List.copyOf(line.keySet())).isEqualTo(List.copyOf(stored.keySet()));
     } finally {
       if (process != null && process.isAlive()) {
         process.destroyForcibly();
