@@ -50,14 +50,16 @@ make k8s-e2e    # kind cluster, deploy, 180 s load, measured coverage of all rol
 ```
 
 `make demo` runs `scripts/compose-demo.sh`, which brings up Redpanda, two MySQL 8 shards, Redis 7,
-and the three services, then runs the load generator once. The compose file caps every JVM at
-160 MB heap and MySQL at a 32 MB buffer pool; set `JAVA_OPTS` to lift the cap. With those caps the
-run below used 1839 MiB of memory across its eight containers halfway through the load, inside a
-Docker VM of 6 CPU and 7.7 GiB: the line introducing the block records the first figure, as
-`docker stats --no-stream` reported it, and the summary's machine line the second. The run is: 300
-simulated drivers per city across two cities pinging their position every second, and ride requests
-at 10 per second for 60 seconds. The summary opens with its own commit, clock window, machine and
-load average at either end of the load, because every number below them moves with those.
+and the three services, then runs the load generator once against them. The compose file caps the
+heap of each service JVM at 160 MiB and of the load generator at 192 MiB, limits Redpanda to 384 MiB
+and gives each MySQL shard a 32 MiB buffer pool; `JAVA_OPTS` replaces the three services' JVM
+options, not the load generator's. With those caps the run below used 1839 MiB of memory across its
+eight containers halfway through the load, inside a Docker VM of 6 CPU and 7.7 GiB: the line
+introducing the block records the first figure, as `docker stats --no-stream` reported it, and the
+summary's machine line the second. The run is: 300 simulated drivers per city across two cities
+pinging their position every second, and ride requests at 10 per second for 60 seconds. The summary
+opens with its own commit, clock window, machine and load average at either end of the load,
+because every number below them moves with those.
 
 <!-- demo-summary:start -->
 `make demo` at commit e900540, 2026-09-27T22:19:09Z to 2026-09-27T22:20:40Z; host load average 6.94 before the run and 15.83 after (one minute averages on the machine that launched it); 1839 MiB across 8 containers in use halfway through the load, as `docker stats --no-stream` reported it:
@@ -80,15 +82,19 @@ shard distribution  shard-0: city 2 -> 301 trips | shard-1: city 1 -> 301 trips
 ```
 <!-- demo-summary:end -->
 
-No part of the block is written by hand, and replacing it takes a run, not an edit. Every number
-comes from live service responses (the load generator counts its own requests and reads
-`GET /matching/stats`); the generator renders the text from those numbers and stores both in
-`demo-out/loadgen-summary.json`, the demo script records the host-side facts the container cannot
-see in `demo-out/demo-run.json`, and `scripts/patch-demo-summary.py` rewrites the block from that
-pair. The fenced text is the generator's summary exactly as it printed it, and the line above it
-comes from the run record. The patcher refuses if the run did not complete, if it ran on a modified
-tree or at a commit other than the one checked out, if the two artifacts are not from one run, if
-the text is missing a line the generator prints, or if a provenance field was never supplied:
+No part of the block is written by hand, and replacing it takes a run, not an edit. The generator
+renders the text from stored fields alone: the counts of its own requests, the counters it reads
+from the services, its configuration and its provenance. It prints the text, then those fields and
+the text together on one `SUMMARY_JSON` line. The summary file it also writes stays inside its
+container, which `--rm` removes, so `scripts/compose-demo.sh` saves that line as
+`demo-out/loadgen-summary.json` and records the host-side facts the container cannot see in
+`demo-out/demo-run.json`. `scripts/patch-demo-summary.py` rewrites the block from that pair: the
+fenced text is the generator's summary exactly as it printed it, and the line above it comes from
+the run record. The patcher refuses if the run did not complete or the generator exited nonzero, if
+it ran on a modified tree or at a commit other than the one checked out, if the two artifacts name
+different commits or machines, if the measured window does not lie inside the span the run record
+gives, if any line of the text is not what the fields stored beside it render to, or if a field is
+missing or still a placeholder:
 
 ```sh
 make demo
@@ -96,9 +102,9 @@ make demo-down
 python3 scripts/patch-demo-summary.py demo-out/loadgen-summary.json demo-out/demo-run.json
 ```
 
-The numbers are measured, not configured: `matched`, `unmatched`, and the latency percentiles
-come from `GET /matching/stats` on the matching service, and the shard distribution comes from
-`GET /rides/stats`, which counts rows in each MySQL shard.
+The outcome figures are measured, not configured: `matched`, `unmatched`, and the latency
+percentiles come from `GET /matching/stats` on the matching service, and the durable decisions and
+the shard distribution come from `GET /rides/stats`, which counts rows in each MySQL shard.
 
 ## Services and API
 

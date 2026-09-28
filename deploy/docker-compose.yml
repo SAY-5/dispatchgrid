@@ -1,6 +1,7 @@
 name: dispatchgrid
 
-# Heap caps keep the whole stack inside a small Docker VM; raise JAVA_OPTS for bigger runs.
+# JVM options of the three services, a 160 MiB heap cap; JAVA_OPTS replaces them. The load
+# generator sets its own below.
 x-service-env: &service-env
   JAVA_TOOL_OPTIONS: ${JAVA_OPTS:--Xmx160m -XX:+UseSerialGC -XX:TieredStopAtLevel=1}
   KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
