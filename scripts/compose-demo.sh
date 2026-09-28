@@ -111,8 +111,10 @@ log "host load average before the run: $LOAD_BEFORE"
 sample_stack_memory &
 SAMPLER_PID=$!
 
+# --no-deps: the services are already up. Without it, run --build rebuilds their images too, and
+# because a rebuilt image gets a new id, compose recreates all three just before the load.
 set +e
-"${COMPOSE[@]}" --profile loadgen run --rm --build -T loadgen 2>&1 | tee "$LOG_FILE"
+"${COMPOSE[@]}" --profile loadgen run --rm --build --no-deps -T loadgen 2>&1 | tee "$LOG_FILE"
 EXIT_CODE=${PIPESTATUS[0]}
 set -e
 
