@@ -260,10 +260,10 @@ python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 ## Tests
 
-`mvn -B verify` at commit 3cbe8fe ran 63 unit tests across the five modules under Surefire and 14
+`mvn -B verify` at commit c1ba2be ran 63 unit tests across the five modules under Surefire and 14
 Testcontainers integration tests under Failsafe, all passing, and
-`python3 -m unittest discover -s scripts -p 'test_*.py'` runs 28 cases over the two gates that guard
-the measured figures in this file: 13 for the demo patcher and 15 for the rollout gate.
+`python3 -m unittest discover -s scripts -p 'test_*.py'` runs 32 cases over the two gates that guard
+the measured figures in this file: 17 for the demo patcher and 15 for the rollout gate.
 
 * Unit: shard routing determinism and overrides, haversine, grid cells, pickup ETA, radius expansion, matcher
   policy (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides,
@@ -272,8 +272,8 @@ the measured figures in this file: 13 for the demo patcher and 15 for the rollou
   cancellation frees only that ride's driver), the retry path through the real topology under
   `TopologyTestDriver` with a mocked wall clock (a ride waits for a driver that arrives later, a
   ride gives up after the third attempt), stats window and percentiles, controllers (including
-  the ETA only while MATCHED and the timeline order), load generator parsing and the provenance it
-  records with a summary.
+  the ETA only while MATCHED and the timeline order), load generator parsing, the provenance it
+  records with a summary, and a summary text that the fields stored beside it render exactly.
 * Integration (Testcontainers): two MySQL shards with Flyway (trip lands in the shard for its
   city), Redis GEO ordering, heartbeat expiry, exclusive Lua claims under 64 concurrent claimers,
   the rider and driver services end to end against Redpanda, and the full Streams topology:
