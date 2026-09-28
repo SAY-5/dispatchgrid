@@ -241,6 +241,54 @@ class DemoSummaryPatcherTest(unittest.TestCase):
     def test_refuses_unreadable_artifacts(self):
         self.assert_refused("{not json", self.run_record())
 
+    def committed_run(self):
+        """The run's two files committed under docs/demo-runs and the README patched from them."""
+        run_dir = self.repo / "docs" / "demo-runs" / self.commit
+        run_dir.mkdir(parents=True)
+        (run_dir / "loadgen-summary.json").write_text(json.dumps(self.summary()))
+        (run_dir / "demo-run.json").write_text(json.dumps(self.run_record()))
+        result, readme = self.patch(self.summary(), self.run_record())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return run_dir, readme
+
+    def check(self, run_dir):
+        readme_path = self.repo / "README.md"
+        before = readme_path.read_text()
+        result = subprocess.run(
+            [sys.executable, str(PATCHER), "--check", str(run_dir), "--readme", str(readme_path)],
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(readme_path.read_text(), before, "a check must never write the README")
+        return result
+
+    def test_check_passes_the_block_its_committed_run_renders_after_later_commits(self):
+        run_dir, _ = self.committed_run()
+        self.commit_now("a change made after the run was committed")
+        result = self.check(run_dir)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_check_fails_a_block_one_character_away_from_its_run(self):
+        run_dir, readme = self.committed_run()
+        (self.repo / "README.md").write_text(readme.replace("p95=53 ms", "p95=58 ms"))
+        result = self.check(run_dir)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("line 17 of the demo block", result.stdout)
+
+    def test_check_fails_without_the_run_record(self):
+        run_dir, _ = self.committed_run()
+        (run_dir / "demo-run.json").unlink()
+        result = self.check(run_dir)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("demo-run.json", result.stdout)
+
+    def test_check_fails_a_run_whose_commit_is_not_in_the_history_of_head(self):
+        run_dir, _ = self.committed_run()
+        self.git("checkout", "-q", "--orphan", "elsewhere")
+        self.commit_now("a history the demo commit is not part of")
+        result = self.check(run_dir)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(f"{self.commit} is not an ancestor of HEAD", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
