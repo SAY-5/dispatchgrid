@@ -2,6 +2,7 @@ package io.dispatchgrid.loadgen;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -10,6 +11,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -58,7 +61,7 @@ class LoadGenTest {
       Path summary = temporary.resolve("summary.json");
       Path log = temporary.resolve("loadgen.log");
       long before = System.currentTimeMillis();
-      process =
+      ProcessBuilder builder =
           new ProcessBuilder(
                   Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                   "-cp",
@@ -73,8 +76,10 @@ class LoadGenTest {
                   "--cities=1",
                   "--out=" + summary)
               .redirectErrorStream(true)
-              .redirectOutput(log.toFile())
-              .start();
+              .redirectOutput(log.toFile());
+      builder.environment().put("RUN_COMMIT", "abc1234");
+      builder.environment().put("RUN_MACHINE", "a test host");
+      process = builder.start();
       assertThat(process.waitFor(20, TimeUnit.SECONDS)).isTrue();
       assertThat(process.exitValue()).withFailMessage(Files.readString(log)).isZero();
       JsonNode output = Http.JSON.readTree(Files.readString(summary));
@@ -91,12 +96,57 @@ class LoadGenTest {
       assertThat(samples.get(2).get("pingsOk").asLong())
           .isGreaterThan(samples.get(0).get("pingsOk").asLong());
       assertThat(output.get("ridesPerSecond").asInt()).isEqualTo(10);
+      JsonNode provenance = output.get("provenance");
+      assertThat(provenance.get("commit").asText()).isEqualTo("abc1234");
+      assertThat(provenance.get("machine").asText()).isEqualTo("a test host");
+      assertThat(provenance.get("kernel").asText()).contains(System.getProperty("os.arch"));
+      assertThat(Instant.parse(provenance.get("startedAt").asText()).toEpochMilli())
+          .isEqualTo(started / 1000 * 1000);
+      assertThat(Instant.parse(provenance.get("finishedAt").asText()).toEpochMilli())
+          .isEqualTo(stopped / 1000 * 1000);
+      assertThat(provenance.get("loadAverageAtStart").asText())
+          .matches("\\d+\\.\\d\\d|unavailable");
+      assertThat(provenance.get("loadAverageAtEnd").asText()).matches("\\d+\\.\\d\\d|unavailable");
+      assertThat(output.get("complete").asBoolean()).isTrue();
+      assertThat(output.get("summaryText").asText())
+          .startsWith("== dispatchgrid load summary ==")
+          .contains("commit              abc1234")
+          .contains("machine             a test host; container ");
+      assertThat(output.get("runSeconds").asLong()).isBetween(2L, 10L);
+      assertThat(output.get("cityIds").get(0).asInt()).isEqualTo(1);
+      assertThat(output.get("driversPerCity").asInt()).isEqualTo(1);
+      assertThat(output.get("maxInFlightPings").asInt()).isEqualTo(Fleet.MAX_IN_FLIGHT_PINGS);
+      assertThat(output.get("maxInFlightRides").asInt()).isEqualTo(Rides.MAX_IN_FLIGHT_RIDES);
+      // Every figure in the text comes from a stored field: read back, the fields render it
+      // exactly.
+      Map<String, Object> stored =
+          Http.JSON.readValue(
+              Files.readString(summary), new TypeReference<Map<String, Object>>() {});
+      assertThat(LoadGen.renderSummary(stored)).isEqualTo(stored.get("summaryText"));
+      assertThat(List.copyOf(stored.keySet()).getLast()).isEqualTo("complete");
+      // scripts/compose-demo.sh publishes the printed SUMMARY_JSON line, not the file, so the line
+      // must carry the same fields in the same order, `complete` last.
+      List<String> printed =
+          Files.readAllLines(log).stream().filter(l -> l.startsWith("SUMMARY_JSON ")).toList();
+      assertThat(printed).hasSize(1);
+      Map<String, Object> line =
+          Http.JSON.readValue(
+              printed.getFirst().substring("SUMMARY_JSON ".length()),
+              new TypeReference<Map<String, Object>>() {});
+      assertThat(line).isEqualTo(stored);
+      assertThat(List.copyOf(line.keySet())).isEqualTo(List.copyOf(stored.keySet()));
     } finally {
       if (process != null && process.isAlive()) {
         process.destroyForcibly();
       }
       server.stop(0);
     }
+  }
+
+  @Test
+  void reportsALoadAverageThePlatformWillNotGiveAsUnavailable() {
+    assertThat(LoadGen.loadAverage(-1)).isEqualTo("unavailable");
+    assertThat(LoadGen.loadAverage(1.234)).isEqualTo("1.23");
   }
 
   @Test

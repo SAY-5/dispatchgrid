@@ -113,6 +113,11 @@ final class Fleet {
     return maxInFlight - permits.availablePermits();
   }
 
+  /** Pings allowed in flight at once; a ping past this is skipped and counted. */
+  int maxInFlight() {
+    return maxInFlight;
+  }
+
   /** One synchronous round of pings; used to seed the index before rides start. */
   void pingAllAndWait() throws InterruptedException {
     CountDownLatch done = new CountDownLatch(drivers.size());

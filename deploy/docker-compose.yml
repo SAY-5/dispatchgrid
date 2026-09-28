@@ -1,6 +1,7 @@
 name: dispatchgrid
 
-# Heap caps keep the whole stack inside a small Docker VM; raise JAVA_OPTS for bigger runs.
+# JVM options of the three services, a 160 MiB heap cap; JAVA_OPTS replaces them. The load
+# generator sets its own below.
 x-service-env: &service-env
   JAVA_TOOL_OPTIONS: ${JAVA_OPTS:--Xmx160m -XX:+UseSerialGC -XX:TieredStopAtLevel=1}
   KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
@@ -132,6 +133,10 @@ services:
       RIDES_PER_SECOND: ${RIDES_PER_SECOND:-10}
       DRIVERS_PER_CITY: ${DRIVERS_PER_CITY:-300}
       SUMMARY_OUT: /tmp/loadgen-summary.json
+      # scripts/compose-demo.sh supplies these; left at the default the summary records that it
+      # does not know where it ran, and scripts/patch-demo-summary.py refuses to publish it.
+      RUN_COMMIT: ${RUN_COMMIT:-unspecified}
+      RUN_MACHINE: ${RUN_MACHINE:-unspecified}
       JAVA_TOOL_OPTIONS: -Xmx192m -XX:+UseSerialGC
     depends_on:
       - rider-request-service

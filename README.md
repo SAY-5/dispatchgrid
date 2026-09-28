@@ -45,35 +45,80 @@ for the Kubernetes proof.
 make build      # mvn package
 make test       # unit tests plus Testcontainers integration tests (needs Docker)
 make lint       # spotless (google-java-format)
-make demo       # docker compose stack + migrations + 60 s load run, prints the summary
+make demo       # compose stack + migrations + 60 s load run, recorded into demo-out/
 make k8s-e2e    # kind cluster, deploy, 180 s load, measured coverage of all rolling updates
 ```
 
-`make demo` brings up Redpanda, two MySQL 8 shards, Redis 7, and the three services, then runs
-the load generator. The compose file caps every JVM at 160 MB heap and MySQL at a 32 MB buffer
-pool so the whole stack fits in a 2 GiB Docker VM; set `JAVA_OPTS` to lift the cap. The run is: 300 simulated drivers per city across two cities pinging their position every
-second, and ride requests at 10 per second for 60 seconds. The output of the run captured at
-commit ae5dba8 on 2026-09-03 looked like this; the summary printed today also carries retry,
-skipped and durable decision fields, in the format the rollout evidence below shows:
+`make demo` runs `scripts/compose-demo.sh`, which brings up Redpanda, two MySQL 8 shards, Redis 7,
+and the three services, then runs the load generator once against them. The compose file caps the
+heap of each service JVM at 160 MiB and of the load generator at 192 MiB, limits Redpanda to 384 MiB
+and gives each MySQL shard a 32 MiB buffer pool; `JAVA_OPTS` replaces the three services' JVM
+options, not the load generator's. With those caps the run below used 1496 MiB of memory across its
+eight containers halfway through the load, inside a Docker VM of 6 CPU and 7.7 GiB: the line
+introducing the block records the first figure, as `docker stats --no-stream` reported it, and the
+summary's machine line the second. The run is: 300 simulated drivers per city across two cities
+pinging their position every second, and ride requests at 10 per second for 60 seconds. The summary
+opens with its own commit, clock window, machine and load average at either end of the load,
+because every number below them moves with those.
+
+The run below was started only once the machine was quiet: the host's one minute load average below
+8 and the Docker VM's, read from `/proc/loadavg` inside a container, below 3, on two consecutive
+readings 30 seconds apart. `scripts/demo-load-gate.sh` waits for exactly that for up to 45 minutes
+and exits 0 when it holds, 1 when it does not and 2 when it cannot take a reading, removing its
+probe container however it ends. It is not part of `make demo`: run it first and start `make demo`
+only after it exits 0. The capture this one replaced, at ad50b78 with the host gate alone, ended its
+load with the 6 CPU VM at a load average of 16.26 and reported p95 467 ms and p99 689 ms, which
+measured that contention more than the system.
 
 <!-- demo-summary:start -->
+`make demo` at commit 1bc404c, 2026-09-28T18:12:37Z to 2026-09-28T18:14:17Z; host load average 5.62 before the run and 4.68 after (one minute averages on the machine that launched it); 1496 MiB across 8 containers in use halfway through the load, as `docker stats --no-stream` reported it:
+
 ```
 == dispatchgrid load summary ==
-drivers             600 (300 per city), pings ok=37200 errors=0
-rides submitted     603, http errors=0, by shard {shard-0=301, shard-1=302}
-matched             603
-unmatched           0
+run                 60 s at 10 rides/s, cities 1=austin, 2=seattle
+commit              1bc404c
+measured window     2026-09-28T18:13:16Z -> 2026-09-28T18:14:16Z
+machine             Darwin arm64 10 CPU, Docker VM 6 CPU / 7.7 GiB; container linux/aarch64, 6 CPU, JDK 21.0.12.1
+load average        2.18 at the start of the load, 5.75 at the end (kernel above)
+drivers             600 (300 per city), pings ok=37200 errors=0 retries=0 skipped=0
+rides submitted     603, http errors=0, retries=0, skipped=0, by shard {shard-0=301, shard-1=302}
+in-flight bound     1200 pings, 100 rides; a send past the bound is skipped and counted, not queued, and is not an http error
+decided (durable)   603 of 603 trip rows, 603 matched, 0 still requested
+matching counters   matched=603 unmatched=0 retried=0 dropped=0 (in process, per pod, reset by a rollout)
 matches per minute  603 over the 60 s run (matching-service trailing 60 s window: 603)
-match latency       p50=14 ms  p95=53 ms  p99=271 ms
+match latency       p50=15 ms  p95=56 ms  p99=221 ms
 shard distribution  shard-0: city 2 -> 301 trips | shard-1: city 1 -> 302 trips
 ```
 <!-- demo-summary:end -->
 
-The block above is the output of `make demo` on a 6 CPU Colima VM: every number comes from live service responses (the load generator counts its own requests and reads `GET /matching/stats`), nothing is hardcoded.
+The block is written by `scripts/patch-demo-summary.py` from the two files a run leaves behind. The
+generator renders the summary text from stored fields alone: the counts of its own requests, the
+counters it reads from the services, its configuration and its provenance. It prints the text, then
+those fields and the text together on one `SUMMARY_JSON` line. The summary file it also writes stays
+inside its container, which `--rm` removes, so `scripts/compose-demo.sh` saves that line as
+`demo-out/loadgen-summary.json` and records the host-side facts the container cannot see in
+`demo-out/demo-run.json`. The fenced text is the generator's summary exactly as it printed it, and
+the line above it is copied from the run record.
 
-The numbers are measured, not configured: `matched`, `unmatched`, and the latency percentiles
-come from `GET /matching/stats` on the matching service, and the shard distribution comes from
-`GET /rides/stats`, which counts rows in each MySQL shard.
+The patcher checks the two files against each other and against the checkout, not against the
+machine: the fenced text must be what the fields stored beside it render to, character for
+character, and the two files must agree on the commit, the machine and the time (the measured window
+must lie inside the span the run record gives). It also refuses a run that did not complete or whose
+generator exited nonzero, a run made on a modified tree or at a commit other than the one checked
+out, and a field that is missing or still a placeholder. It cannot tell whether the files themselves
+were edited: a field changed together with its line of text passes, and the caption's host load
+averages and memory reading are copied from the run record with nothing to check them against.
+
+```sh
+./scripts/demo-load-gate.sh
+make demo
+make demo-down
+python3 scripts/patch-demo-summary.py demo-out/loadgen-summary.json demo-out/demo-run.json
+```
+
+The outcome figures are measured, not configured: `matched`, `unmatched`, and the latency
+percentiles come from `GET /matching/stats` on the matching service, and the durable decisions and
+the shard distribution come from `GET /rides/stats`, which counts rows in each MySQL shard.
 
 ## Services and API
 
@@ -229,7 +274,10 @@ python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 ## Tests
 
-55 unit tests (Surefire) and 14 integration tests (Failsafe, Testcontainers) across the five modules.
+`mvn -B verify` at commit c1ba2be ran 63 unit tests across the five modules under Surefire and 14
+Testcontainers integration tests under Failsafe, all passing, and
+`python3 -m unittest discover -s scripts -p 'test_*.py'` runs 32 cases over the two gates that guard
+the measured figures in this file: 17 for the demo patcher and 15 for the rollout gate.
 
 * Unit: shard routing determinism and overrides, haversine, grid cells, pickup ETA, radius expansion, matcher
   policy (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides,
@@ -238,7 +286,9 @@ python3 -m unittest discover -s scripts -p 'test_*.py' -v
   cancellation frees only that ride's driver), the retry path through the real topology under
   `TopologyTestDriver` with a mocked wall clock (a ride waits for a driver that arrives later, a
   ride gives up after the third attempt), stats window and percentiles, controllers (including
-  the ETA only while MATCHED and the timeline order), load generator parsing.
+  the ETA only while MATCHED and the timeline order), load generator parsing, the provenance it
+  records with a summary, a summary text that the fields stored beside it render exactly, and a
+  printed `SUMMARY_JSON` line that matches the summary file, `complete` last.
 * Integration (Testcontainers): two MySQL shards with Flyway (trip lands in the shard for its
   city), Redis GEO ordering, heartbeat expiry, exclusive Lua claims under 64 concurrent claimers,
   the rider and driver services end to end against Redpanda, and the full Streams topology:
@@ -275,7 +325,10 @@ matching-service/         Kafka Streams topology, Matcher, SurgeTracker, GET /ma
 loadgen/                  synthetic fleet and rider traffic with a measured summary
 deploy/docker-compose.yml local stack
 deploy/k8s/               manifests + kustomization + loadgen job
+scripts/compose-demo.sh   the compose demo, with the commit, machine, load average and memory recorded
+scripts/demo-load-gate.sh waits for a quiet host and Docker VM before a demo run that will be quoted
 scripts/k8s-e2e.sh        kind cluster, deploy, load, rolling update, assertions
+scripts/patch-demo-summary.py  rewrites the demo block above from a run, or refuses
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the reasoning behind the design.

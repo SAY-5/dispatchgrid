@@ -13,3 +13,4 @@ loadgen.log
 rollout-windows.jsonl
 rollout-evidence.txt
 __pycache__/
+demo-out/

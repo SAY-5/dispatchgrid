@@ -80,6 +80,11 @@ final class Rides {
     return maxInFlight - permits.availablePermits();
   }
 
+  /** Submissions allowed in flight at once; a ride past this is skipped and counted. */
+  int maxInFlight() {
+    return maxInFlight;
+  }
+
   /**
    * One ride for the next city in round-robin order. If the bound is reached the ride is skipped
    * and counted rather than queued, so a stalled target cannot grow the set of live requests.
