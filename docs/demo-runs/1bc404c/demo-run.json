@@ -1,0 +1,11 @@
+{
+  "command": "make demo",
+  "commit": "1bc404c",
+  "machine": "Darwin arm64 10 CPU, Docker VM 6 CPU / 7.7 GiB",
+  "startedAt": "2026-09-28T18:12:37Z",
+  "finishedAt": "2026-09-28T18:14:17Z",
+  "hostLoadAverageBefore": "5.62",
+  "hostLoadAverageAfter": "4.68",
+  "stackMemory": "1496 MiB across 8 containers",
+  "loadgenExitCode": 0
+}

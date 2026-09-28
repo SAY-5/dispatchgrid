@@ -9,6 +9,7 @@ target/
 .env
 deploy/.kind-*
 loadgen-summary.json
+!docs/demo-runs/*/loadgen-summary.json
 loadgen.log
 rollout-windows.jsonl
 rollout-evidence.txt
