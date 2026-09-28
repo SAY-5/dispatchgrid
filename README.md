@@ -61,11 +61,14 @@ pinging their position every second, and ride requests at 10 per second for 60 s
 opens with its own commit, clock window, machine and load average at either end of the load,
 because every number below them moves with those.
 
-The run below was started only once the machine was quiet, a gate that is not part of `make demo`:
-the host's one minute load average below 8 and the Docker VM's, read from `/proc/loadavg` inside a
-container, below 3, on two consecutive readings 30 seconds apart. The capture this one replaced, at
-ad50b78 with the host gate alone, ended its load with the 6 CPU VM at a load average of 16.26 and
-reported p95 467 ms and p99 689 ms, which measured that contention more than the system.
+The run below was started only once the machine was quiet: the host's one minute load average below
+8 and the Docker VM's, read from `/proc/loadavg` inside a container, below 3, on two consecutive
+readings 30 seconds apart. `scripts/demo-load-gate.sh` waits for exactly that for up to 45 minutes
+and exits 0 when it holds, 1 when it does not and 2 when it cannot take a reading, removing its
+probe container however it ends. It is not part of `make demo`: run it first and start `make demo`
+only after it exits 0. The capture this one replaced, at ad50b78 with the host gate alone, ended its
+load with the 6 CPU VM at a load average of 16.26 and reported p95 467 ms and p99 689 ms, which
+measured that contention more than the system.
 
 <!-- demo-summary:start -->
 `make demo` at commit 1bc404c, 2026-09-28T18:12:37Z to 2026-09-28T18:14:17Z; host load average 5.62 before the run and 4.68 after (one minute averages on the machine that launched it); 1496 MiB across 8 containers in use halfway through the load, as `docker stats --no-stream` reported it:
@@ -88,21 +91,26 @@ shard distribution  shard-0: city 2 -> 301 trips | shard-1: city 1 -> 302 trips
 ```
 <!-- demo-summary:end -->
 
-No part of the block is written by hand, and replacing it takes a run, not an edit. The generator
-renders the text from stored fields alone: the counts of its own requests, the counters it reads
-from the services, its configuration and its provenance. It prints the text, then those fields and
-the text together on one `SUMMARY_JSON` line. The summary file it also writes stays inside its
-container, which `--rm` removes, so `scripts/compose-demo.sh` saves that line as
+The block is written by `scripts/patch-demo-summary.py` from the two files a run leaves behind. The
+generator renders the summary text from stored fields alone: the counts of its own requests, the
+counters it reads from the services, its configuration and its provenance. It prints the text, then
+those fields and the text together on one `SUMMARY_JSON` line. The summary file it also writes stays
+inside its container, which `--rm` removes, so `scripts/compose-demo.sh` saves that line as
 `demo-out/loadgen-summary.json` and records the host-side facts the container cannot see in
-`demo-out/demo-run.json`. `scripts/patch-demo-summary.py` rewrites the block from that pair: the
-fenced text is the generator's summary exactly as it printed it, and the line above it comes from
-the run record. The patcher refuses if the run did not complete or the generator exited nonzero, if
-it ran on a modified tree or at a commit other than the one checked out, if the two artifacts name
-different commits or machines, if the measured window does not lie inside the span the run record
-gives, if any line of the text is not what the fields stored beside it render to, or if a field is
-missing or still a placeholder:
+`demo-out/demo-run.json`. The fenced text is the generator's summary exactly as it printed it, and
+the line above it is copied from the run record.
+
+The patcher checks the two files against each other and against the checkout, not against the
+machine: the fenced text must be what the fields stored beside it render to, character for
+character, and the two files must agree on the commit, the machine and the time (the measured window
+must lie inside the span the run record gives). It also refuses a run that did not complete or whose
+generator exited nonzero, a run made on a modified tree or at a commit other than the one checked
+out, and a field that is missing or still a placeholder. It cannot tell whether the files themselves
+were edited: a field changed together with its line of text passes, and the caption's host load
+averages and memory reading are copied from the run record with nothing to check them against.
 
 ```sh
+./scripts/demo-load-gate.sh
 make demo
 make demo-down
 python3 scripts/patch-demo-summary.py demo-out/loadgen-summary.json demo-out/demo-run.json
@@ -279,7 +287,8 @@ the measured figures in this file: 17 for the demo patcher and 15 for the rollou
   `TopologyTestDriver` with a mocked wall clock (a ride waits for a driver that arrives later, a
   ride gives up after the third attempt), stats window and percentiles, controllers (including
   the ETA only while MATCHED and the timeline order), load generator parsing, the provenance it
-  records with a summary, and a summary text that the fields stored beside it render exactly.
+  records with a summary, a summary text that the fields stored beside it render exactly, and a
+  printed `SUMMARY_JSON` line that matches the summary file, `complete` last.
 * Integration (Testcontainers): two MySQL shards with Flyway (trip lands in the shard for its
   city), Redis GEO ordering, heartbeat expiry, exclusive Lua claims under 64 concurrent claimers,
   the rider and driver services end to end against Redpanda, and the full Streams topology:
@@ -317,6 +326,7 @@ loadgen/                  synthetic fleet and rider traffic with a measured summ
 deploy/docker-compose.yml local stack
 deploy/k8s/               manifests + kustomization + loadgen job
 scripts/compose-demo.sh   the compose demo, with the commit, machine, load average and memory recorded
+scripts/demo-load-gate.sh waits for a quiet host and Docker VM before a demo run that will be quoted
 scripts/k8s-e2e.sh        kind cluster, deploy, load, rolling update, assertions
 scripts/patch-demo-summary.py  rewrites the demo block above from a run, or refuses
 ```
