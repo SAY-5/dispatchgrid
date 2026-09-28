@@ -167,6 +167,25 @@ class DemoSummaryPatcherTest(unittest.TestCase):
         other["commit"] = "0000000"
         self.assert_refused(self.summary(), other)
 
+    def test_refuses_two_artifacts_from_different_machines(self):
+        other = self.run_record()
+        other["machine"] = "Linux x86_64 4 CPU, Docker VM 4 CPU / 15.6 GiB"
+        result = self.assert_refused(self.summary(), other)
+        self.assertIn("disagree about the machine", result.stdout)
+
+    def test_refuses_a_measured_window_outside_the_run_record_span(self):
+        # The fixture's load ran from 05:10:33 to 05:11:33 on 2026-09-27.
+        for started, finished in (
+            ("2026-09-27T05:10:34Z", "2026-09-27T05:12:14Z"),
+            ("2026-09-27T05:09:40Z", "2026-09-27T05:11:32Z"),
+            ("2026-09-28T05:09:40Z", "2026-09-28T05:12:14Z"),
+        ):
+            with self.subTest(started=started, finished=finished):
+                other = self.run_record()
+                other["startedAt"], other["finishedAt"] = started, finished
+                result = self.assert_refused(self.summary(), other)
+                self.assertIn("does not lie inside the run record's span", result.stdout)
+
     def test_refuses_text_that_reports_a_number_the_run_did_not_measure(self):
         edited = self.summary()
         edited["summaryText"] = edited["summaryText"].replace(

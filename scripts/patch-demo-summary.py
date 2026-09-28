@@ -12,6 +12,7 @@ nobody measured.
 """
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -84,6 +85,15 @@ def text_value(record, field, where):
     return value.strip()
 
 
+def utc_time(record, field, where):
+    """A timestamp in the one form both artifacts write, UTC to the second."""
+    value = text_value(record, field, where)
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError as error:
+        raise Refused(f"{where}: {field} {value!r} is not a UTC time to the second") from error
+
+
 def load(path, where):
     try:
         return json.loads(Path(path).read_text())
@@ -148,6 +158,18 @@ def render(summary, run, head):
         raise Refused(
             f"the run was made at commit {commit} but HEAD is {head[:len(commit)]}, so these"
             " artifacts are from an earlier run; run make demo at this commit before patching"
+        )
+    # The demo script passes one RUN_MACHINE to the generator and writes the same text into its own
+    # record, and it records its span around the whole run, so the measured load lies inside it.
+    if text_value(provenance, "machine", "provenance") != text_value(run, "machine", "run"):
+        raise Refused("the two artifacts disagree about the machine, so they are not one run")
+    window = [utc_time(provenance, field, "provenance") for field in ("startedAt", "finishedAt")]
+    span = [utc_time(run, field, "run") for field in ("startedAt", "finishedAt")]
+    if not span[0] <= window[0] <= window[1] <= span[1]:
+        raise Refused(
+            f"the measured window {provenance['startedAt']} -> {provenance['finishedAt']} does not"
+            f" lie inside the run record's span {run['startedAt']} -> {run['finishedAt']},"
+            " so the two artifacts are not one run"
         )
 
     body = summary_text(summary)
