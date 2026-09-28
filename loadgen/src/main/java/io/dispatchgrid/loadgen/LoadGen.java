@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.StringJoiner;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
@@ -104,19 +105,26 @@ public final class LoadGen {
             loadStartedAtEpochMs, loadStoppedAtEpochMs, loadAverageAtStart, loadAverageAtEnd));
     summary.put("durationSeconds", opt.durationSeconds());
     summary.put("ridesPerSecond", opt.ridesPerSecond());
+    // Whole seconds from the start of ride submission to its stop: the divisor of the per-minute
+    // rate below, which can differ from the configured duration.
+    summary.put("runSeconds", runSeconds);
     summary.put("loadStartedAtEpochMs", loadStartedAtEpochMs);
     summary.put("loadStoppedAtEpochMs", loadStoppedAtEpochMs);
     summary.put("loadSamples", loadSamples);
     summary.put("cities", cities.stream().map(City::name).toList());
+    summary.put("cityIds", cities.stream().map(City::id).toList());
     summary.put("drivers", fleet.size());
+    summary.put("driversPerCity", opt.driversPerCity());
     summary.put("pingsOk", fleet.pingsOk.get());
     summary.put("pingErrors", fleet.pingErrors.get());
     summary.put("pingRetries", fleet.pingRetries.get());
     summary.put("pingsSkipped", fleet.pingsSkipped.get());
+    summary.put("maxInFlightPings", fleet.maxInFlight());
     summary.put("ridesSubmitted", rides.submitted.get());
     summary.put("rideErrors", rides.errors.get());
     summary.put("rideRetries", rides.retries.get());
     summary.put("ridesSkipped", rides.skipped.get());
+    summary.put("maxInFlightRides", rides.maxInFlight());
     summary.put("matched", matched);
     summary.put("unmatched", unmatched);
     // A ride that finds no free driver waits in the retry store for its next attempt, so this is
@@ -144,11 +152,13 @@ public final class LoadGen {
         "durableMatched",
         byStatus.getOrDefault("MATCHED", 0L) + byStatus.getOrDefault("COMPLETED", 0L));
 
-    // The text is stored beside the numbers it was rendered from, and the run is marked complete
-    // only here, after every field is in: a reader or a patcher gets both or neither.
-    String text = renderSummary(summary, cities, opt, runSeconds);
-    summary.put("complete", true);
+    // The text is rendered from the fields above alone and stored beside them, so it can be checked
+    // against them. `complete` goes in last, after the text, and only then is the map serialized,
+    // once to the file and once as the SUMMARY_JSON line: a summary with the flag was written after
+    // every other field was in.
+    String text = renderSummary(summary);
     summary.put("summaryText", text);
+    summary.put("complete", true);
     Files.writeString(
         Path.of(opt.out()), Http.JSON.writerWithDefaultPrettyPrinter().writeValueAsString(summary));
 
@@ -290,85 +300,101 @@ public final class LoadGen {
     return out;
   }
 
-  @SuppressWarnings("unchecked")
-  private static String renderSummary(
-      Map<String, Object> s, List<City> cities, Options opt, long runSeconds) {
-    String cityNames =
-        cities.stream().map(c -> c.id() + "=" + c.name()).collect(Collectors.joining(", "));
-    StringBuilder shards = new StringBuilder();
-    ((Map<String, Map<Integer, Long>>) s.get("tripsByShard"))
+  /**
+   * Renders the printed summary from the stored fields alone, so the text is a function of the
+   * numbers stored beside it; scripts/patch-demo-summary.py renders the same lines from those
+   * fields and refuses a text that differs. The wildcard types let a summary read back from its
+   * JSON, where map keys are strings, render the same text as the maps built in {@link #main}.
+   */
+  static String renderSummary(Map<String, ?> s) {
+    List<?> ids = (List<?>) s.get("cityIds");
+    List<?> names = (List<?>) s.get("cities");
+    StringJoiner cities = new StringJoiner(", ");
+    for (int i = 0; i < ids.size(); i++) {
+      cities.add(ids.get(i) + "=" + names.get(i));
+    }
+    StringJoiner shards = new StringJoiner(" | ");
+    ((Map<?, ?>) s.get("tripsByShard"))
         .forEach(
             (shard, perCity) -> {
-              if (shards.length() > 0) {
-                shards.append(" | ");
-              }
-              shards.append(shard).append(": ");
-              shards.append(
-                  perCity.entrySet().stream()
-                      .map(e -> "city " + e.getKey() + " -> " + e.getValue() + " trips")
-                      .collect(Collectors.joining(", ")));
+              StringJoiner trips = new StringJoiner(", ");
+              ((Map<?, ?>) perCity)
+                  .forEach((city, count) -> trips.add("city " + city + " -> " + count + " trips"));
+              shards.add(shard + ": " + trips);
             });
-    Map<String, Object> prov = (Map<String, Object>) s.get("provenance");
-    StringBuilder out = new StringBuilder("== dispatchgrid load summary ==\n");
-    out.append(
-        String.format(
-            "run                 %d s at %d rides/s, cities %s%n",
-            opt.durationSeconds(), opt.ridesPerSecond(), cityNames));
-    out.append(String.format("commit              %s%n", prov.get("commit")));
-    out.append(
-        String.format(
-            "measured window     %s -> %s%n", prov.get("startedAt"), prov.get("finishedAt")));
-    out.append(
-        String.format(
-            "machine             %s; container %s%n", prov.get("machine"), prov.get("kernel")));
-    out.append(
-        String.format(
-            "load average        %s at the start of the load, %s at the end (kernel above)%n",
-            prov.get("loadAverageAtStart"), prov.get("loadAverageAtEnd")));
-    out.append(
-        String.format(
-            "drivers             %d (%d per city), pings ok=%d errors=%d retries=%d skipped=%d%n",
-            s.get("drivers"),
-            opt.driversPerCity(),
-            s.get("pingsOk"),
-            s.get("pingErrors"),
-            s.get("pingRetries"),
-            s.get("pingsSkipped")));
-    out.append(
-        String.format(
-            "rides submitted     %d, http errors=%d, retries=%d, skipped=%d, by shard %s%n",
-            s.get("ridesSubmitted"),
-            s.get("rideErrors"),
-            s.get("rideRetries"),
-            s.get("ridesSkipped"),
-            s.get("submittedByShard")));
-    out.append(
-        String.format(
-            "in-flight bound     %d pings, %d rides; a send past the bound is skipped and counted,"
-                + " not queued, and is not an http error%n",
-            Fleet.MAX_IN_FLIGHT_PINGS, Rides.MAX_IN_FLIGHT_RIDES));
-    out.append(
-        String.format(
-            "decided (durable)   %d of %d trip rows, %d matched, %d still requested%n",
-            s.get("durableDecided"),
-            s.get("durableTrips"),
-            s.get("durableMatched"),
-            s.get("durableRequested")));
-    out.append(
-        String.format(
-            "matching counters   matched=%d unmatched=%d retried=%d dropped=%d (in process, per"
-                + " pod, reset by a rollout)%n",
-            s.get("matched"), s.get("unmatched"), s.get("matchRetries"), s.get("dropped")));
-    out.append(
-        String.format(
-            "matches per minute  %d over the %d s run (matching-service trailing 60 s window: %d)%n",
-            s.get("matchesPerMinuteRun"), runSeconds, s.get("matchesPerMinuteWindow")));
-    out.append(
-        String.format(
-            "match latency       p50=%d ms  p95=%d ms  p99=%d ms%n",
-            s.get("p50LatencyMs"), s.get("p95LatencyMs"), s.get("p99LatencyMs")));
-    out.append(String.format("shard distribution  %s%n", shards));
+    Map<?, ?> prov = (Map<?, ?>) s.get("provenance");
+    StringBuilder out = new StringBuilder();
+    line(out, "== dispatchgrid load summary ==");
+    line(
+        out,
+        "run                 %d s at %d rides/s, cities %s",
+        s.get("durationSeconds"),
+        s.get("ridesPerSecond"),
+        cities);
+    line(out, "commit              %s", prov.get("commit"));
+    line(out, "measured window     %s -> %s", prov.get("startedAt"), prov.get("finishedAt"));
+    line(out, "machine             %s; container %s", prov.get("machine"), prov.get("kernel"));
+    line(
+        out,
+        "load average        %s at the start of the load, %s at the end (kernel above)",
+        prov.get("loadAverageAtStart"),
+        prov.get("loadAverageAtEnd"));
+    line(
+        out,
+        "drivers             %d (%d per city), pings ok=%d errors=%d retries=%d skipped=%d",
+        s.get("drivers"),
+        s.get("driversPerCity"),
+        s.get("pingsOk"),
+        s.get("pingErrors"),
+        s.get("pingRetries"),
+        s.get("pingsSkipped"));
+    line(
+        out,
+        "rides submitted     %d, http errors=%d, retries=%d, skipped=%d, by shard %s",
+        s.get("ridesSubmitted"),
+        s.get("rideErrors"),
+        s.get("rideRetries"),
+        s.get("ridesSkipped"),
+        s.get("submittedByShard"));
+    line(
+        out,
+        "in-flight bound     %d pings, %d rides; a send past the bound is skipped and counted,"
+            + " not queued, and is not an http error",
+        s.get("maxInFlightPings"),
+        s.get("maxInFlightRides"));
+    line(
+        out,
+        "decided (durable)   %d of %d trip rows, %d matched, %d still requested",
+        s.get("durableDecided"),
+        s.get("durableTrips"),
+        s.get("durableMatched"),
+        s.get("durableRequested"));
+    line(
+        out,
+        "matching counters   matched=%d unmatched=%d retried=%d dropped=%d (in process, per"
+            + " pod, reset by a rollout)",
+        s.get("matched"),
+        s.get("unmatched"),
+        s.get("matchRetries"),
+        s.get("dropped"));
+    line(
+        out,
+        "matches per minute  %d over the %d s run (matching-service trailing 60 s window: %d)",
+        s.get("matchesPerMinuteRun"),
+        s.get("runSeconds"),
+        s.get("matchesPerMinuteWindow"));
+    line(
+        out,
+        "match latency       p50=%d ms  p95=%d ms  p99=%d ms",
+        s.get("p50LatencyMs"),
+        s.get("p95LatencyMs"),
+        s.get("p99LatencyMs"));
+    line(out, "shard distribution  %s", shards);
     return out.toString();
+  }
+
+  private static void line(StringBuilder out, String format, Object... args) {
+    out.append(String.format(Locale.ROOT, format, args)).append('\n');
   }
 
   private static String toJson(Object o) {

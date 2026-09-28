@@ -2,6 +2,7 @@ package io.dispatchgrid.loadgen;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -11,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -110,6 +112,18 @@ class LoadGenTest {
           .startsWith("== dispatchgrid load summary ==")
           .contains("commit              abc1234")
           .contains("machine             a test host; container ");
+      assertThat(output.get("runSeconds").asLong()).isBetween(2L, 10L);
+      assertThat(output.get("cityIds").get(0).asInt()).isEqualTo(1);
+      assertThat(output.get("driversPerCity").asInt()).isEqualTo(1);
+      assertThat(output.get("maxInFlightPings").asInt()).isEqualTo(Fleet.MAX_IN_FLIGHT_PINGS);
+      assertThat(output.get("maxInFlightRides").asInt()).isEqualTo(Rides.MAX_IN_FLIGHT_RIDES);
+      // Every figure in the text comes from a stored field: read back, the fields render it
+      // exactly.
+      Map<String, Object> stored =
+          Http.JSON.readValue(
+              Files.readString(summary), new TypeReference<Map<String, Object>>() {});
+      assertThat(LoadGen.renderSummary(stored)).isEqualTo(stored.get("summaryText"));
+      assertThat(List.copyOf(stored.keySet()).getLast()).isEqualTo("complete");
     } finally {
       if (process != null && process.isAlive()) {
         process.destroyForcibly();
