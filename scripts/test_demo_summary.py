@@ -71,9 +71,21 @@ class DemoSummaryPatcherTest(unittest.TestCase):
                 "loadAverageAtStart": "1.42",
                 "loadAverageAtEnd": "3.08",
             },
-            "ridesSubmitted": 603, "pingsOk": 37200,
-            "durableTrips": 603, "durableMatched": 603,
-            "complete": True, "summaryText": summary_text(self.commit),
+            "durationSeconds": 60, "ridesPerSecond": 10, "runSeconds": 60,
+            "cities": ["austin", "seattle"], "cityIds": [1, 2],
+            "drivers": 600, "driversPerCity": 300,
+            "pingsOk": 37200, "pingErrors": 0, "pingRetries": 0, "pingsSkipped": 0,
+            "maxInFlightPings": 1200,
+            "ridesSubmitted": 603, "rideErrors": 0, "rideRetries": 0, "ridesSkipped": 0,
+            "maxInFlightRides": 100,
+            "matched": 603, "unmatched": 0, "matchRetries": 0, "dropped": 0,
+            "matchesPerMinuteRun": 603, "matchesPerMinuteWindow": 603,
+            "p50LatencyMs": 14, "p95LatencyMs": 53, "p99LatencyMs": 271,
+            "submittedByShard": {"shard-0": 301, "shard-1": 302},
+            "tripsByShard": {"shard-0": {"2": 301}, "shard-1": {"1": 302}},
+            "durableTrips": 603, "durableRequested": 0, "durableDecided": 603,
+            "durableMatched": 603,
+            "summaryText": summary_text(self.commit), "complete": True,
         }
 
     def run_record(self):
@@ -128,6 +140,20 @@ class DemoSummaryPatcherTest(unittest.TestCase):
         del lines[1]
         cut["summaryText"] = "".join(lines)
         self.assert_refused(cut, self.run_record())
+
+    def test_refuses_a_summary_text_with_a_line_cut_short(self):
+        cut = self.summary()
+        lines = cut["summaryText"].splitlines(keepends=True)
+        lines[-1] = lines[-1][:40] + "\n"
+        cut["summaryText"] = "".join(lines)
+        result = self.assert_refused(cut, self.run_record())
+        self.assertIn("line 14 of summaryText", result.stdout)
+
+    def test_refuses_a_summary_without_a_field_its_text_prints(self):
+        older = self.summary()
+        del older["runSeconds"]
+        result = self.assert_refused(older, self.run_record())
+        self.assertIn("runSeconds", result.stdout)
 
     def test_refuses_a_run_made_at_an_earlier_commit_than_head(self):
         summary, run = self.summary(), self.run_record()
@@ -186,11 +212,20 @@ class DemoSummaryPatcherTest(unittest.TestCase):
                 result = self.assert_refused(self.summary(), other)
                 self.assertIn("does not lie inside the run record's span", result.stdout)
 
-    def test_refuses_text_that_reports_a_number_the_run_did_not_measure(self):
-        edited = self.summary()
-        edited["summaryText"] = edited["summaryText"].replace(
-            "rides submitted     603,", "rides submitted     900,")
-        self.assert_refused(edited, self.run_record())
+    def test_refuses_text_that_reports_a_number_its_fields_do_not_hold(self):
+        for original, edited in (
+            ("rides submitted     603,", "rides submitted     900,"),
+            ("p99=271 ms", "p99=71 ms"),
+            ("1200 pings, 100 rides", "1000 pings, 100 rides"),
+            ("over the 60 s run", "over the 30 s run"),
+            ("city 1 -> 302 trips", "city 1 -> 320 trips"),
+        ):
+            with self.subTest(edited=edited):
+                summary = self.summary()
+                summary["summaryText"] = summary["summaryText"].replace(original, edited)
+                self.assertNotEqual(summary["summaryText"], summary_text(self.commit))
+                result = self.assert_refused(summary, self.run_record())
+                self.assertIn("is not what the fields stored beside it render to", result.stdout)
 
     def test_refuses_a_run_from_a_modified_tree(self):
         dirty_summary, dirty_run = self.summary(), self.run_record()

@@ -5,10 +5,11 @@ The block is never written by hand. It is rendered from the two artifacts of one
 the generator's summary JSON, which holds the numbers and the text rendered from them,
 and the demo script's run JSON, which holds the host-side facts the generator cannot
 see. The fenced part of the block is that text exactly as the generator printed it,
-every line of it, and the line above the fence carries the host-side facts. A run that
-did not complete, a run made at another commit than the one checked out, or a
-provenance field the demo path never supplied refuses instead of publishing a figure
-nobody measured.
+and the line above the fence carries the host-side facts. Nothing is written unless
+the run completed at the commit checked out here on an unmodified tree, the two
+artifacts name the same commit and machine, the measured window lies inside the span
+the run record gives, every line of the text is what the fields stored beside it
+render to, and no field is missing or a placeholder.
 """
 
 import argparse
@@ -22,23 +23,33 @@ import sys
 
 START = "<!-- demo-summary:start -->"
 END = "<!-- demo-summary:end -->"
-# The lines the generator prints, in order. A text that does not have exactly these was cut
-# short or edited, so it is not the capture of a run.
-LINES = (
+# The summary as io.dispatchgrid.loadgen.LoadGen.renderSummary prints it. Every figure is a field
+# stored beside the text, named here in braces; the words around them are fixed. A text that is
+# not exactly these lines filled in from its own fields was cut short or edited after the run.
+FORMAT = (
     "== dispatchgrid load summary ==",
-    "run ",
-    "commit ",
-    "measured window ",
-    "machine ",
-    "load average ",
-    "drivers ",
-    "rides submitted ",
-    "in-flight bound ",
-    "decided (durable) ",
-    "matching counters ",
-    "matches per minute ",
-    "match latency ",
-    "shard distribution ",
+    "run                 {durationSeconds} s at {ridesPerSecond} rides/s, cities {cities}",
+    "commit              {commit}",
+    "measured window     {startedAt} -> {finishedAt}",
+    "machine             {machine}; container {kernel}",
+    "load average        {loadAverageAtStart} at the start of the load, {loadAverageAtEnd} at the end (kernel above)",
+    "drivers             {drivers} ({driversPerCity} per city), pings ok={pingsOk} errors={pingErrors} retries={pingRetries} skipped={pingsSkipped}",
+    "rides submitted     {ridesSubmitted}, http errors={rideErrors}, retries={rideRetries}, skipped={ridesSkipped}, by shard {submittedByShard}",
+    "in-flight bound     {maxInFlightPings} pings, {maxInFlightRides} rides; a send past the bound is skipped and counted, not queued, and is not an http error",
+    "decided (durable)   {durableDecided} of {durableTrips} trip rows, {durableMatched} matched, {durableRequested} still requested",
+    "matching counters   matched={matched} unmatched={unmatched} retried={matchRetries} dropped={dropped} (in process, per pod, reset by a rollout)",
+    "matches per minute  {matchesPerMinuteRun} over the {runSeconds} s run (matching-service trailing 60 s window: {matchesPerMinuteWindow})",
+    "match latency       p50={p50LatencyMs} ms  p95={p95LatencyMs} ms  p99={p99LatencyMs} ms",
+    "shard distribution  {tripsByShard}",
+)
+COUNT_FIELDS = (
+    "durationSeconds", "ridesPerSecond", "runSeconds", "drivers", "driversPerCity",
+    "pingsOk", "pingErrors", "pingRetries", "pingsSkipped", "maxInFlightPings",
+    "ridesSubmitted", "rideErrors", "rideRetries", "ridesSkipped", "maxInFlightRides",
+    "durableDecided", "durableTrips", "durableMatched", "durableRequested",
+    "matched", "unmatched", "matchRetries", "dropped",
+    "matchesPerMinuteRun", "matchesPerMinuteWindow",
+    "p50LatencyMs", "p95LatencyMs", "p99LatencyMs",
 )
 # "unspecified" is what the generator records for a missing RUN_COMMIT or RUN_MACHINE, and
 # "unavailable" what it records for a load average the platform would not give it.
@@ -61,14 +72,6 @@ PROVENANCE_FIELDS = (
     "finishedAt",
     "loadAverageAtStart",
     "loadAverageAtEnd",
-)
-# Numbers that must appear in the rendered text exactly as the structured fields hold them,
-# so an edited text cannot report a figure the artifact does not contain.
-CHECKED_NUMBERS = (
-    ("ridesSubmitted", "rides submitted     {value},"),
-    ("pingsOk", "pings ok={value} "),
-    ("durableTrips", "of {value} trip rows,"),
-    ("durableMatched", "{value} matched,"),
 )
 
 
@@ -94,6 +97,12 @@ def utc_time(record, field, where):
         raise Refused(f"{where}: {field} {value!r} is not a UTC time to the second") from error
 
 
+def count(value, field):
+    if type(value) is not int:
+        raise Refused(f"summary: {field} is not a measured integer")
+    return value
+
+
 def load(path, where):
     try:
         return json.loads(Path(path).read_text())
@@ -115,21 +124,55 @@ def head_commit(repo):
     return result.stdout.strip()
 
 
+def rendered_text(summary):
+    """The text the stored fields render to, the way the generator renders it from them."""
+    values = {field: count(summary.get(field), field) for field in COUNT_FIELDS}
+    provenance = summary["provenance"]
+    for field in PROVENANCE_FIELDS:
+        values[field] = provenance[field]
+
+    ids, names = summary.get("cityIds"), summary.get("cities")
+    if (not isinstance(ids, list) or not isinstance(names, list) or len(ids) != len(names)
+            or not all(isinstance(name, str) for name in names)):
+        raise Refused("summary: cityIds and cities are not one list of cities")
+    values["cities"] = ", ".join(f"{count(i, 'cityIds')}={name}" for i, name in zip(ids, names))
+
+    # The generator keeps both maps sorted, by shard name and then by city id.
+    submitted = summary.get("submittedByShard")
+    if not isinstance(submitted, dict):
+        raise Refused("summary: submittedByShard is not a map of shards")
+    values["submittedByShard"] = "{" + ", ".join(
+        f"{shard}={count(n, 'submittedByShard')}" for shard, n in sorted(submitted.items())) + "}"
+    shards = summary.get("tripsByShard")
+    if not isinstance(shards, dict) or not all(isinstance(c, dict) for c in shards.values()):
+        raise Refused("summary: tripsByShard is not a map of shards to cities")
+    try:
+        values["tripsByShard"] = " | ".join(
+            f"{shard}: " + ", ".join(
+                f"city {city} -> {count(n, 'tripsByShard')} trips"
+                for city, n in sorted(cities.items(), key=lambda item: int(item[0])))
+            for shard, cities in sorted(shards.items()))
+    except ValueError as error:
+        raise Refused(f"summary: tripsByShard has a city that is not an id ({error})") from error
+    return "".join(line.format(**values) + "\n" for line in FORMAT)
+
+
 def summary_text(summary):
-    """The text as the generator printed it, refused unless it has every line it prints."""
+    """The text as the generator printed it, refused unless its own fields render it exactly."""
     text = summary.get("summaryText")
-    if not isinstance(text, str) or not text.endswith("\n"):
-        raise Refused("summary: summaryText is missing or cut short")
-    lines = text.splitlines()
-    for number, label in enumerate(LINES, start=1):
-        if len(lines) < number or not lines[number - 1].startswith(label):
+    if not isinstance(text, str):
+        raise Refused("summary: summaryText is missing")
+    expected = rendered_text(summary)
+    if text == expected:
+        return text
+    found, wanted = text.split("\n"), expected.split("\n")
+    for number, (line, want) in enumerate(zip(found, wanted), start=1):
+        if line != want:
             raise Refused(
-                f"summary: line {number} of summaryText does not start with {label.strip()!r},"
-                " so it is not the whole summary the generator prints"
+                f"summary: line {number} of summaryText is not what the fields stored beside it"
+                f" render to: it reads {line!r} where the fields give {want!r}"
             )
-    if len(lines) > len(LINES):
-        raise Refused(f"summary: summaryText has {len(lines) - len(LINES)} lines the generator does not print")
-    return text
+    raise Refused("summary: summaryText does not end where the text its fields render to ends")
 
 
 def render(summary, run, head):
@@ -173,13 +216,6 @@ def render(summary, run, head):
         )
 
     body = summary_text(summary)
-    for field, shape in CHECKED_NUMBERS:
-        value = summary.get(field)
-        if not isinstance(value, int):
-            raise Refused(f"summary: {field} is not a measured integer")
-        if shape.format(value=value) not in body:
-            raise Refused(f"summary: the text does not report {field}={value} from the same run")
-
     caption = (
         f"`{text_value(run, 'command', 'run')}` at commit {commit},"
         f" {text_value(run, 'startedAt', 'run')} to {text_value(run, 'finishedAt', 'run')};"
