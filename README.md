@@ -116,6 +116,15 @@ make demo-down
 python3 scripts/patch-demo-summary.py demo-out/loadgen-summary.json demo-out/demo-run.json
 ```
 
+The run above is committed in `docs/demo-runs/1bc404c/`: its `loadgen-summary.json` and
+`demo-run.json`, and `gate-readings.txt`, the host and Docker VM load averages read 30 seconds apart
+before it started, the last two passing. The build job in CI runs
+`python3 scripts/patch-demo-summary.py --check docs/demo-runs/1bc404c`, which renders the block from
+those two files and fails if the README's block differs from it by a single character. The check
+applies every rule above but one: since commits follow a run, the run's commit must be an ancestor of
+HEAD rather than HEAD itself. Publishing a new run means committing its two files under
+`docs/demo-runs/<commit>/` and pointing that step at them.
+
 The outcome figures are measured, not configured: `matched`, `unmatched`, and the latency
 percentiles come from `GET /matching/stats` on the matching service, and the durable decisions and
 the shard distribution come from `GET /rides/stats`, which counts rows in each MySQL shard.
@@ -276,8 +285,9 @@ python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 `mvn -B verify` at commit c1ba2be ran 63 unit tests across the five modules under Surefire and 14
 Testcontainers integration tests under Failsafe, all passing, and
-`python3 -m unittest discover -s scripts -p 'test_*.py'` runs 32 cases over the two gates that guard
-the measured figures in this file: 17 for the demo patcher and 15 for the rollout gate.
+`python3 -m unittest discover -s scripts -p 'test_*.py'` runs 36 cases over the two gates that guard
+the measured figures in this file: 21 for the demo patcher and its check mode and 15 for the rollout
+gate.
 
 * Unit: shard routing determinism and overrides, haversine, grid cells, pickup ETA, radius expansion, matcher
   policy (nearest-first, expansion, cross-city isolation, claim contention with concurrent rides,
@@ -310,6 +320,7 @@ the measured figures in this file: 17 for the demo patcher and 15 for the rollou
 | [v4.0.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v4.0.0) | retries for a ride that finds no free driver: a changelogged `pending-retries` store with a wall-clock punctuator, a `ride.retry` row per pass, and `UNMATCHED` only after the last attempt |
 | [v5.0.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v5.0.0) | trip timeline and pickup ETA: `GET /rides/{rideId}/timeline` read from the shard that owns the trip, and `pickupEtaSeconds` from the driver distance the match now persists |
 | [v5.1.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v5.1.0) | load generator and rolling update proof hardening: the generator at a 1Gi ceiling with bounded in-flight sends that skip and count past the bound, one retry per ride on a transport failure, a failed generator job reported with its termination reason, ride decisions asserted from the durable trip rows rather than per-pod counters, the three Deployments replaced one at a time, and a measured coverage gate (`scripts/verify-rollout-evidence.py` over a 180 s load run and one recorded rollout window per Deployment) that a green rollout status alone no longer satisfies |
+| [v5.2.0](https://github.com/SAY-5/dispatchgrid/releases/tag/v5.2.0) | compose demo provenance: the load generator stores the commit, machine, kernel, measured window and load averages with every figure its summary prints and renders the text from those fields, `make demo` runs `scripts/compose-demo.sh` and records each run into `demo-out/`, `scripts/patch-demo-summary.py` writes the README demo block from a run's two files or refuses, CI checks the block against the published run's files in `docs/demo-runs/1bc404c/`, and `scripts/demo-load-gate.sh` waits for a quiet host and Docker VM before a run that will be quoted |
 
 Each version is an annotated git tag with a GitHub release; the release notes carry the detail
 behind a row.
@@ -325,10 +336,11 @@ matching-service/         Kafka Streams topology, Matcher, SurgeTracker, GET /ma
 loadgen/                  synthetic fleet and rider traffic with a measured summary
 deploy/docker-compose.yml local stack
 deploy/k8s/               manifests + kustomization + loadgen job
+docs/demo-runs/           the files of the published compose demo run, which CI checks the block against
 scripts/compose-demo.sh   the compose demo, with the commit, machine, load average and memory recorded
 scripts/demo-load-gate.sh waits for a quiet host and Docker VM before a demo run that will be quoted
 scripts/k8s-e2e.sh        kind cluster, deploy, load, rolling update, assertions
-scripts/patch-demo-summary.py  rewrites the demo block above from a run, or refuses
+scripts/patch-demo-summary.py  rewrites the demo block above from a run or refuses; --check compares it with a committed run
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the reasoning behind the design.

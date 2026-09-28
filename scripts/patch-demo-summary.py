@@ -10,6 +10,11 @@ the run completed at the commit checked out here on an unmodified tree, the two
 artifacts name the same commit and machine, the measured window lies inside the span
 the run record gives, every line of the text is what the fields stored beside it
 render to, and no field is missing or a placeholder.
+
+With --check DIR it writes nothing. It renders the block from the loadgen-summary.json
+and demo-run.json committed in DIR and fails unless the README's block is that block to
+the character. A committed run is older than the commit checked out, so its commit must
+be an ancestor of HEAD rather than HEAD itself; every other rule holds.
 """
 
 import argparse
@@ -23,6 +28,10 @@ import sys
 
 START = "<!-- demo-summary:start -->"
 END = "<!-- demo-summary:end -->"
+BLOCK = re.compile(re.escape(START) + ".*?" + re.escape(END) + r"\n", re.DOTALL)
+# The names compose-demo.sh gives the two artifacts, kept when a run is committed.
+SUMMARY_FILE = "loadgen-summary.json"
+RUN_FILE = "demo-run.json"
 # The summary as io.dispatchgrid.loadgen.LoadGen.renderSummary prints it. Every figure is a field
 # stored beside the text, named here in braces; the words around them are fixed. A text that is
 # not exactly these lines filled in from its own fields was cut short or edited after the run.
@@ -110,18 +119,46 @@ def load(path, where):
         raise Refused(f"{where}: {error}") from error
 
 
-def head_commit(repo):
-    """The full object name of the commit checked out in the repository the README is in."""
+def git(repo, *args):
     try:
-        result = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--verify", "HEAD"],
-            text=True, capture_output=True, check=False,
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], text=True, capture_output=True, check=False
         )
     except OSError as error:
-        raise Refused(f"{repo}: cannot run git to read HEAD ({error})") from error
+        raise Refused(f"{repo}: cannot run git ({error})") from error
+
+
+def head_commit(repo):
+    """The full object name of the commit checked out in the repository the README is in."""
+    result = git(repo, "rev-parse", "--verify", "HEAD")
     if result.returncode != 0:
         raise Refused(f"{repo}: cannot read HEAD ({result.stderr.strip()})")
     return result.stdout.strip()
+
+
+def require_head(repo, commit):
+    # A failed attempt keeps the last completed pair, so agreeing artifacts can still be an
+    # earlier run's. Only a run of the commit checked out here describes this README's code.
+    head = head_commit(repo)
+    if not head.startswith(commit):
+        raise Refused(
+            f"the run was made at commit {commit} but HEAD is {head[:len(commit)]}, so these"
+            " artifacts are from an earlier run; run make demo at this commit before patching"
+        )
+
+
+def require_ancestor(repo, commit):
+    """A committed run is checked later, so its commit need only be in the history of HEAD."""
+    found = git(repo, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}")
+    if found.returncode != 0:
+        raise Refused(
+            f"the run's commit {commit} is not in this repository; a shallow clone lacks it"
+        )
+    result = git(repo, "merge-base", "--is-ancestor", found.stdout.strip(), "HEAD")
+    if result.returncode == 1:
+        raise Refused(f"the run's commit {commit} is not an ancestor of HEAD")
+    if result.returncode != 0:
+        raise Refused(f"{repo}: cannot compare {commit} with HEAD ({result.stderr.strip()})")
 
 
 def rendered_text(summary):
@@ -175,7 +212,7 @@ def summary_text(summary):
     raise Refused("summary: summaryText does not end where the text its fields render to ends")
 
 
-def render(summary, run, head):
+def render(summary, run, repo, checking=False):
     if summary.get("complete") is not True:
         raise Refused("summary: the run did not complete, so it carries no summary to quote")
     exit_code = run.get("loadgenExitCode")
@@ -195,13 +232,10 @@ def render(summary, run, head):
         raise Refused(f"the run was made on a modified tree ({commit}), so it is not reproducible")
     if not re.fullmatch(r"[0-9a-f]{7,40}", commit):
         raise Refused(f"the run's commit {commit!r} is not an abbreviated object name")
-    # A failed attempt keeps the last completed pair, so agreeing artifacts can still be an
-    # earlier run's. Only a run of the commit checked out here describes this README's code.
-    if not head.startswith(commit):
-        raise Refused(
-            f"the run was made at commit {commit} but HEAD is {head[:len(commit)]}, so these"
-            " artifacts are from an earlier run; run make demo at this commit before patching"
-        )
+    if checking:
+        require_ancestor(repo, commit)
+    else:
+        require_head(repo, commit)
     # The demo script passes one RUN_MACHINE to the generator and writes the same text into its own
     # record, and it records its span around the whole run, so the measured load lies inside it.
     if text_value(provenance, "machine", "provenance") != text_value(run, "machine", "run"):
@@ -234,31 +268,67 @@ def render(summary, run, head):
 
 def patch(readme, block):
     current = readme.read_text()
-    pattern = re.compile(re.escape(START) + ".*?" + re.escape(END) + r"\n", re.DOTALL)
-    if not pattern.search(current):
+    if not BLOCK.search(current):
         raise Refused(f"{readme}: no {START} ... {END} block to replace")
-    patched = pattern.sub(lambda _: block, current, count=1)
+    patched = BLOCK.sub(lambda _: block, current, count=1)
     if patched == current:
         return False
     readme.write_text(patched)
     return True
 
 
+def check(readme, block, source):
+    """Fail unless the README's block is the one the committed run renders to, exactly."""
+    try:
+        found = BLOCK.search(readme.read_text())
+    except OSError as error:
+        raise Refused(f"{readme}: {error}") from error
+    if not found:
+        raise Refused(f"{readme}: no {START} ... {END} block to check")
+    if found.group(0) == block:
+        return
+    lines, wanted = found.group(0).split("\n"), block.split("\n")
+    for number, (line, want) in enumerate(zip(lines, wanted), start=1):
+        if line != want:
+            raise Refused(
+                f"{readme}: line {number} of the demo block reads {line!r} where the run in"
+                f" {source} renders {want!r}"
+            )
+    raise Refused(f"{readme}: the demo block does not end where the one {source} renders ends")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("summary", help="loadgen-summary.json written by the run")
-    parser.add_argument("run", help="demo-run.json written by scripts/compose-demo.sh")
+    parser.add_argument("summary", nargs="?", help="loadgen-summary.json written by the run")
+    parser.add_argument("run", nargs="?", help="demo-run.json written by scripts/compose-demo.sh")
+    parser.add_argument(
+        "--check", metavar="DIR",
+        help=f"write nothing; fail unless the block is what DIR/{SUMMARY_FILE} and"
+        f" DIR/{RUN_FILE} render to",
+    )
     parser.add_argument("--readme", default="README.md")
     args = parser.parse_args()
+    if args.check and (args.summary or args.run):
+        parser.error("--check reads both files from DIR; give it no file arguments")
+    if not args.check and not (args.summary and args.run):
+        parser.error("give the summary and run files of a run, or --check DIR")
     readme = Path(args.readme)
+    repo = readme.resolve().parent
     try:
-        head = head_commit(readme.resolve().parent)
-        block = render(load(args.summary, "summary"), load(args.run, "run"), head)
-        changed = patch(readme, block)
+        if args.check:
+            source = Path(args.check)
+            summary, run = load(source / SUMMARY_FILE, "summary"), load(source / RUN_FILE, "run")
+            check(readme, render(summary, run, repo, checking=True), source)
+        else:
+            block = render(load(args.summary, "summary"), load(args.run, "run"), repo)
+            changed = patch(readme, block)
     except Refused as refusal:
         print(f"REFUSED: {refusal}")
         return 1
-    print(f"{'patched' if changed else 'unchanged'}: {args.readme}")
+    if args.check:
+        print(f"matches: the demo block in {args.readme} is what {args.check} renders to")
+    else:
+        print(f"{'patched' if changed else 'unchanged'}: {args.readme}")
     return 0
 
 
