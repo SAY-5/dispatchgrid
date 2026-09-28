@@ -53,7 +53,7 @@ make k8s-e2e    # kind cluster, deploy, 180 s load, measured coverage of all rol
 and the three services, then runs the load generator once against them. The compose file caps the
 heap of each service JVM at 160 MiB and of the load generator at 192 MiB, limits Redpanda to 384 MiB
 and gives each MySQL shard a 32 MiB buffer pool; `JAVA_OPTS` replaces the three services' JVM
-options, not the load generator's. With those caps the run below used 1839 MiB of memory across its
+options, not the load generator's. With those caps the run below used 1541 MiB of memory across its
 eight containers halfway through the load, inside a Docker VM of 6 CPU and 7.7 GiB: the line
 introducing the block records the first figure, as `docker stats --no-stream` reported it, and the
 summary's machine line the second. The run is: 300 simulated drivers per city across two cities
@@ -62,23 +62,23 @@ opens with its own commit, clock window, machine and load average at either end 
 because every number below them moves with those.
 
 <!-- demo-summary:start -->
-`make demo` at commit e900540, 2026-09-27T22:19:09Z to 2026-09-27T22:20:40Z; host load average 6.94 before the run and 15.83 after (one minute averages on the machine that launched it); 1839 MiB across 8 containers in use halfway through the load, as `docker stats --no-stream` reported it:
+`make demo` at commit ad50b78, 2026-09-28T00:41:36Z to 2026-09-28T00:43:58Z; host load average 7.19 before the run and 18.02 after (one minute averages on the machine that launched it); 1541 MiB across 8 containers in use halfway through the load, as `docker stats --no-stream` reported it:
 
 ```
 == dispatchgrid load summary ==
 run                 60 s at 10 rides/s, cities 1=austin, 2=seattle
-commit              e900540
-measured window     2026-09-27T22:19:39Z -> 2026-09-27T22:20:39Z
+commit              ad50b78
+measured window     2026-09-28T00:42:56Z -> 2026-09-28T00:43:57Z
 machine             Darwin arm64 10 CPU, Docker VM 6 CPU / 7.7 GiB; container linux/aarch64, 6 CPU, JDK 21.0.12.1
-load average        1.91 at the start of the load, 2.38 at the end (kernel above)
-drivers             600 (300 per city), pings ok=37200 errors=0 retries=0 skipped=0
-rides submitted     602, http errors=0, retries=0, skipped=0, by shard {shard-0=301, shard-1=301}
+load average        4.40 at the start of the load, 16.26 at the end (kernel above)
+drivers             600 (300 per city), pings ok=37633 errors=0 retries=0 skipped=0
+rides submitted     610, http errors=0, retries=0, skipped=0, by shard {shard-0=305, shard-1=305}
 in-flight bound     1200 pings, 100 rides; a send past the bound is skipped and counted, not queued, and is not an http error
-decided (durable)   602 of 602 trip rows, 602 matched, 0 still requested
-matching counters   matched=602 unmatched=0 retried=0 dropped=0 (in process, per pod, reset by a rollout)
-matches per minute  602 over the 60 s run (matching-service trailing 60 s window: 602)
-match latency       p50=16 ms  p95=92 ms  p99=245 ms
-shard distribution  shard-0: city 2 -> 301 trips | shard-1: city 1 -> 301 trips
+decided (durable)   610 of 610 trip rows, 610 matched, 0 still requested
+matching counters   matched=610 unmatched=0 retried=0 dropped=0 (in process, per pod, reset by a rollout)
+matches per minute  610 over the 60 s run (matching-service trailing 60 s window: 600)
+match latency       p50=17 ms  p95=467 ms  p99=689 ms
+shard distribution  shard-0: city 2 -> 305 trips | shard-1: city 1 -> 305 trips
 ```
 <!-- demo-summary:end -->
 
